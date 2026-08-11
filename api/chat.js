@@ -18,27 +18,28 @@ export default async function handler(req, res) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured in Vercel settings.' });
+      return res.status(500).json({ error: 'GEMINI_API_KEY is missing on Vercel.' });
     }
 
-    // Handle both JSON object and stringified body
     let body = req.body;
     if (typeof body === 'string') {
       try {
         body = JSON.parse(body);
       } catch (e) {
-        return res.status(400).json({ error: 'Invalid JSON body string' });
+        return res.status(400).json({ error: 'Invalid JSON string' });
       }
     }
 
     const messages = body?.messages;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'No messages array provided in request.' });
+      return res.status(400).json({ error: 'No messages array provided.' });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
+    
+    // Updated to 'gemini-1.5-flash-latest' for full compatibility
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-1.5-flash-latest',
       systemInstruction: 'You are the official AI teaching assistant for Hira Science Academy, specializing in Punjab Board Class 9 and 10 Physics and Mathematics.'
     });
 
