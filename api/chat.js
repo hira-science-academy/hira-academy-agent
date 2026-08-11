@@ -37,9 +37,9 @@ export default async function handler(req, res) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // Updated to standard model string
+    // Updated active model string
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction: 'You are the official AI teaching assistant for Hira Science Academy, specializing in Punjab Board Class 9 and 10 Physics and Mathematics.'
     });
 
