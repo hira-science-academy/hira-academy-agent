@@ -2,6 +2,6 @@
   "name": "hira-academy-agent",
   "version": "1.0.0",
   "dependencies": {
-    "@google/genai": "latest"
+    "@google/generative-ai": "latest"
   }
 }
