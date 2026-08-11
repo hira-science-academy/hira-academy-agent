@@ -1,14 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-export default async function handler(req, res) {
-  // Allow your website domain to communicate with Vercel (CORS)
+module.exports = async function handler(req, res) {
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Respond immediately to browser preflight requests
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -45,4 +44,4 @@ export default async function handler(req, res) {
     console.error("Agent Error:", error);
     res.status(500).json({ error: 'The academy assistant is currently updating. Please check our notes pages directly.' });
   }
-}
+};
