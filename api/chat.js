@@ -33,7 +33,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No messages array provided.' });
     }
 
-    // Format chat history into Gemini REST API format
     const contents = messages.map(m => ({
       role: m.role === 'user' ? 'user' : 'model',
       parts: [{ text: m.content || '' }]
@@ -43,9 +42,9 @@ export default async function handler(req, res) {
       parts: [{ text: 'You are the official AI teaching assistant for Hira Science Academy, specializing in Punjab Board Class 9 and 10 Physics and Mathematics.' }]
     };
 
-    // Direct REST API call matching your verified curl request
+    // Updated to the active 2026 Gemini 3.6 Flash endpoint
     const response = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
       {
         method: 'POST',
         headers: {
