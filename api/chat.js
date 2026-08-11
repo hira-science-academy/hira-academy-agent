@@ -1,6 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
 export default async function handler(req, res) {
+  // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -17,7 +16,7 @@ export default async function handler(req, res) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is missing in Vercel settings.' });
+      return res.status(500).json({ error: 'GEMINI_API_KEY is missing on Vercel.' });
     }
 
     let body = req.body;
@@ -25,32 +24,51 @@ export default async function handler(req, res) {
       try {
         body = JSON.parse(body);
       } catch (e) {
-        return res.status(400).json({ error: 'Invalid JSON string' });
+        return res.status(400).json({ error: 'Invalid JSON payload' });
       }
     }
 
-    const messages = body?.messages;
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    const messages = body?.messages || [];
+    if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'No messages array provided.' });
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: 'You are the official AI teaching assistant for Hira Science Academy, specializing in Punjab Board Class 9 and 10 Physics and Mathematics.'
-    });
-
-    const formattedHistory = messages.slice(0, -1).map(m => ({
+    // Format chat history into Gemini REST API format
+    const contents = messages.map(m => ({
       role: m.role === 'user' ? 'user' : 'model',
       parts: [{ text: m.content || '' }]
     }));
 
-    const latestMessage = messages[messages.length - 1]?.content || '';
+    const systemInstruction = {
+      parts: [{ text: 'You are the official AI teaching assistant for Hira Science Academy, specializing in Punjab Board Class 9 and 10 Physics and Mathematics.' }]
+    };
 
-    const chat = model.startChat({ history: formattedHistory });
-    const result = await chat.sendMessage(latestMessage);
+    // Direct REST API call matching your verified curl request
+    const response = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify({
+          systemInstruction: systemInstruction,
+          contents: contents
+        })
+      }
+    );
 
-    return res.status(200).json({ reply: result.response.text() });
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        error: data.error?.message || 'Gemini API Error' 
+      });
+    }
+
+    const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response returned from model.';
+    return res.status(200).json({ reply: replyText });
 
   } catch (error) {
     console.error("Vercel Invocation Error:", error);
