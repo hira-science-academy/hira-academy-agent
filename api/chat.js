@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
   try {
     // ============================================================
-    // API KEY
+    // GEMINI API KEY
     // ============================================================
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // BODY
+    // READ REQUEST BODY
     // ============================================================
     let body = req.body;
 
@@ -56,13 +56,6 @@ export default async function handler(req, res) {
         error: "No messages array provided."
       });
     }
-
-    // ============================================================
-    // GET COMPLETE CONVERSATION TEXT
-    // ============================================================
-    const conversationText = messages
-      .map(m => m?.content || "")
-      .join(" ");
 
     const latestUserMessage = [...messages]
       .reverse()
@@ -85,7 +78,7 @@ export default async function handler(req, res) {
     const SITE = "https://hiraacademy.com.pk";
 
     // ============================================================
-    // NORMALIZE
+    // NORMALIZE TEXT
     // ============================================================
     function normalize(text) {
       return String(text || "")
@@ -94,8 +87,8 @@ export default async function handler(req, res) {
         .replace(/&amp;/gi, " and ")
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/[^a-z0-9.\s]/g, " ")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/[^\p{L}\p{N}.\s-]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
@@ -103,11 +96,18 @@ export default async function handler(req, res) {
     const normalizedQuestion =
       normalize(question);
 
+    // ============================================================
+    // COMPLETE CONVERSATION
+    // ============================================================
+    const conversationText = messages
+      .map(m => m?.content || "")
+      .join(" ");
+
     const normalizedConversation =
       normalize(conversationText);
 
     // ============================================================
-    // CLASS DETECTION
+    // DETECT CLASS
     // ============================================================
     function detectClass(text) {
       const q = normalize(text);
@@ -132,12 +132,11 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // SUBJECT DETECTION
+    // DETECT SUBJECT
     // ============================================================
     function detectSubject(text) {
       const q = normalize(text);
 
-      // MATHEMATICS
       if (
         /\bmath\b/.test(q) ||
         /\bmaths\b/.test(q) ||
@@ -151,8 +150,6 @@ export default async function handler(req, res) {
         /\bvectors\b/.test(q) ||
         /\btrigonometry\b/.test(q) ||
         /\bprobability\b/.test(q) ||
-        /\bcomplex number\b/.test(q) ||
-        /\bcomplex numbers\b/.test(q) ||
         /\bgeometry\b/.test(q) ||
         /\bcircle\b/.test(q) ||
         /\btangent\b/.test(q)
@@ -160,7 +157,6 @@ export default async function handler(req, res) {
         return "mathematics";
       }
 
-      // PHYSICS
       if (
         /\bphysics\b/.test(q) ||
         /\belectromagnetism\b/.test(q) ||
@@ -179,7 +175,9 @@ export default async function handler(req, res) {
         /\bnuclear\b/.test(q) ||
         /\bwave\b/.test(q) ||
         /\bsound\b/.test(q) ||
-        /\blight\b/.test(q)
+        /\blight\b/.test(q) ||
+        /\bheat\b/.test(q) ||
+        /\btemperature\b/.test(q)
       ) {
         return "physics";
       }
@@ -193,10 +191,9 @@ export default async function handler(req, res) {
     function detectExercise(text) {
       const q = normalize(text);
 
-      const match =
-        q.match(
-          /\bexercise\s+(\d{1,2})\.(\d{1,2})\b/
-        );
+      let match = q.match(
+        /\bexercise\s+(\d{1,2})\.(\d{1,2})\b/
+      );
 
       if (match) {
         return {
@@ -205,24 +202,14 @@ export default async function handler(req, res) {
         };
       }
 
-      // Also support "6.2 class 10"
-      const simple =
-        q.match(
-          /\b(\d{1,2})\.(\d{1,2})\b/
-        );
+      match = q.match(
+        /\b(?:ex|exercise)\s*(\d{1,2})\.(\d{1,2})\b/
+      );
 
-      if (
-        simple &&
-        (
-          q.includes("solve") ||
-          q.includes("exercise") ||
-          q.includes("question") ||
-          q.includes("class")
-        )
-      ) {
+      if (match) {
         return {
-          unit: Number(simple[1]),
-          exercise: Number(simple[2])
+          unit: Number(match[1]),
+          exercise: Number(match[2])
         };
       }
 
@@ -230,383 +217,141 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // PHYSICS CHAPTER TOPICS
+    // DETECT CHAPTER
     // ============================================================
-    const PHYSICS10 = {
-      10: [
-        "thermal physics",
-        "heat",
-        "temperature",
-        "thermal expansion",
-        "specific heat",
-        "latent heat"
-      ],
-
-      11: [
-        "transfer of thermal energy",
-        "conduction",
-        "convection"
-      ],
-
-      12: [
-        "waves",
-        "wavelength",
-        "frequency",
-        "amplitude"
-      ],
-
-      13: [
-        "sound",
-        "echo",
-        "pitch",
-        "ultrasound",
-        "sonar"
-      ],
-
-      14: [
-        "light",
-        "reflection",
-        "refraction",
-        "lens",
-        "mirror",
-        "critical angle"
-      ],
-
-      15: [
-        "electrostatics",
-        "electric charge",
-        "electric field",
-        "electric potential",
-        "capacitor"
-      ],
-
-      16: [
-        "electricity",
-        "electric current",
-        "voltage",
-        "potential difference",
-        "resistance",
-        "ohm law",
-        "electrical power"
-      ],
-
-      17: [
-        "electromagnetism",
-        "right hand grip rule",
-        "right hand grip",
-        "magnetic field",
-        "magnetic field lines",
-        "current carrying conductor",
-        "solenoid",
-        "fleming left hand rule",
-        "left hand rule",
-        "dc motor",
-        "electric motor",
-        "split ring",
-        "commutator",
-        "relay",
-        "earth magnetic field"
-      ],
-
-      18: [
-        "electromagnetic induction",
-        "faraday law",
-        "induced emf",
-        "lenz law",
-        "ac generator",
-        "transformer",
-        "electron beam",
-        "cro"
-      ],
-
-      19: [
-        "semiconductor",
-        "pn junction",
-        "diode",
-        "led",
-        "depletion region",
-        "forward bias",
-        "reverse bias",
-        "analog electronics",
-        "digital electronics",
-        "and gate",
-        "or gate",
-        "not gate",
-        "nand gate",
-        "nor gate"
-      ],
-
-      20: [
-        "atomic physics",
-        "nuclear physics",
-        "atom",
-        "nucleus",
-        "radioactivity",
-        "radioactive decay",
-        "nuclear fusion",
-        "nuclear fission"
-      ],
-
-      21: [
-        "space",
-        "environment",
-        "solar system",
-        "planet",
-        "sun",
-        "venus",
-        "mars",
-        "cyclone",
-        "background radiation"
-      ]
-    };
-
-    // ============================================================
-    // CHAPTER DETECTION
-    // ============================================================
-    function detectChapter(text, subject) {
+    function detectChapter(text) {
       const q = normalize(text);
 
-      const explicit =
-        q.match(
-          /\bchapter\s+(\d{1,2})\b/
-        );
+      const match = q.match(
+        /\bchapter\s+(\d{1,2})\b/
+      );
 
-      if (explicit) {
-        return Number(explicit[1]);
-      }
-
-      const unit =
-        q.match(
-          /\bunit\s+(\d{1,2})\b/
-        );
-
-      if (
-        unit &&
-        subject === "physics"
-      ) {
-        return Number(unit[1]);
-      }
-
-      if (
-        subject === "physics"
-      ) {
-        let best = null;
-        let bestScore = 0;
-
-        for (
-          const [chapter, topics]
-          of Object.entries(PHYSICS10)
-        ) {
-          let score = 0;
-
-          for (
-            const topic
-            of topics
-          ) {
-            if (
-              q.includes(
-                normalize(topic)
-              )
-            ) {
-              score +=
-                normalize(topic)
-                  .split(" ")
-                  .length;
-            }
-          }
-
-          if (
-            score > bestScore
-          ) {
-            bestScore = score;
-            best = Number(chapter);
-          }
-        }
-
-        return best;
+      if (match) {
+        return Number(match[1]);
       }
 
       return null;
     }
 
     // ============================================================
-    // IMPORTANT: USE CONVERSATION HISTORY
+    // DETECT CONTEXT
     // ============================================================
-    //
-    // This fixes:
-    //
-    // User: "exercise 6.2 class 10"
-    // User: "why?"
-    //
-    // "why?" inherits Class 10 + Mathematics + Exercise 6.2.
-    //
-    // ============================================================
-
     let grade =
-      detectClass(
-        normalizedQuestion
-      );
+      detectClass(normalizedQuestion);
 
     if (!grade) {
       grade =
-        detectClass(
-          normalizedConversation
-        );
+        detectClass(normalizedConversation);
     }
 
     let subject =
-      detectSubject(
-        normalizedQuestion
-      );
+      detectSubject(normalizedQuestion);
 
     if (!subject) {
       subject =
-        detectSubject(
-          normalizedConversation
-        );
+        detectSubject(normalizedConversation);
     }
 
     let exercise =
-      detectExercise(
-        normalizedQuestion
-      );
+      detectExercise(normalizedQuestion);
 
     if (!exercise) {
       exercise =
-        detectExercise(
-          normalizedConversation
-        );
+        detectExercise(normalizedConversation);
     }
 
     let chapter =
-      detectChapter(
-        normalizedQuestion,
-        subject
-      );
+      detectChapter(normalizedQuestion);
 
     if (!chapter) {
       chapter =
-        detectChapter(
-          normalizedConversation,
-          subject
-        );
+        detectChapter(normalizedConversation);
     }
 
     // ============================================================
-    // EXERCISE => MATHEMATICS
-    // ============================================================
+    // EXERCISE WITHOUT SUBJECT
     //
-    // For Class 10:
-    //
+    // Example:
     // "exercise 6.2 class 10"
     //
-    // is a Mathematics query when no physics topic
-    // is present.
-    //
+    // If it does not explicitly say Math/Physics,
+    // use Mathematics for Class 9/10 exercises.
     // ============================================================
-
-    if (
-      exercise &&
-      !subject
-    ) {
-      subject =
-        "mathematics";
+    if (exercise && !subject) {
+      subject = "mathematics";
     }
 
-    if (
-      exercise &&
-      !grade
-    ) {
+    if (exercise && !grade) {
       grade = 10;
-    }
-
-    // ============================================================
-    // EXPLICIT PHYSICS OVERRIDES
-    // ============================================================
-    const physics17 = [
-      "right hand grip rule",
-      "right hand grip",
-      "fleming left hand rule",
-      "left hand rule",
-      "solenoid",
-      "dc motor",
-      "electric motor",
-      "split ring",
-      "commutator",
-      "relay"
-    ];
-
-    if (
-      physics17.some(
-        x =>
-          normalizedConversation.includes(
-            normalize(x)
-          )
-      )
-    ) {
-      grade = 10;
-      subject = "physics";
-      chapter = 17;
     }
 
     // ============================================================
     // HUB URLS
     // ============================================================
-    const hubs = {
-      physics9:
-        `${SITE}/Physics-9th.html`,
-
-      physics10:
-        `${SITE}/Physics-10th-New-2026.html`,
-
+    const HUBS = {
       mathematics9:
         `${SITE}/Mathematics-9th.html`,
 
       mathematics10:
-        `${SITE}/Mathematics-10th-New-2026.html`
+        `${SITE}/Mathematics-10th-New-2026.html`,
+
+      physics9:
+        `${SITE}/Physics-9th.html`,
+
+      physics10:
+        `${SITE}/Physics-10th-New-2026.html`
     };
 
-    let hubUrl = null;
+    // ============================================================
+    // SELECT HUBS
+    // ============================================================
+    let selectedHubs = [];
 
-    if (
-      subject === "physics" &&
-      grade === 10
-    ) {
-      hubUrl =
-        hubs.physics10;
+    if (subject === "mathematics" && grade === 10) {
+      selectedHubs = [HUBS.mathematics10];
     }
 
-    if (
-      subject === "physics" &&
-      grade === 9
-    ) {
-      hubUrl =
-        hubs.physics9;
+    else if (subject === "mathematics" && grade === 9) {
+      selectedHubs = [HUBS.mathematics9];
     }
 
-    if (
-      subject === "mathematics" &&
-      grade === 10
-    ) {
-      hubUrl =
-        hubs.mathematics10;
+    else if (subject === "physics" && grade === 10) {
+      selectedHubs = [HUBS.physics10];
     }
 
-    if (
-      subject === "mathematics" &&
-      grade === 9
-    ) {
-      hubUrl =
-        hubs.mathematics9;
+    else if (subject === "physics" && grade === 9) {
+      selectedHubs = [HUBS.physics9];
+    }
+
+    else if (subject === "mathematics") {
+      selectedHubs = [
+        HUBS.mathematics10,
+        HUBS.mathematics9
+      ];
+    }
+
+    else if (subject === "physics") {
+      selectedHubs = [
+        HUBS.physics10,
+        HUBS.physics9
+      ];
+    }
+
+    else {
+      // Unknown subject:
+      // Search all four main academic hubs.
+      selectedHubs = [
+        HUBS.mathematics10,
+        HUBS.mathematics9,
+        HUBS.physics10,
+        HUBS.physics9
+      ];
     }
 
     // ============================================================
-    // FETCH PAGE
+    // FETCH WITH TIMEOUT
     // ============================================================
-    async function fetchPage(
-      url,
-      timeout = 10000
-    ) {
+    async function fetchPage(url, timeout = 6000) {
       const controller =
         new AbortController();
 
@@ -618,37 +363,35 @@ export default async function handler(req, res) {
 
       try {
         const response =
-          await fetch(
-            url,
-            {
-              signal:
-                controller.signal,
-              headers: {
-                "User-Agent":
-                  "Hira-Academy-Assistant/1.0",
-                Accept:
-                  "text/html,application/xhtml+xml"
-              }
+          await fetch(url, {
+            signal: controller.signal,
+            headers: {
+              "User-Agent":
+                "Hira-Academy-Assistant/1.0",
+              "Accept":
+                "text/html,application/xhtml+xml"
             }
-          );
+          });
 
         if (!response.ok) {
-          console.error(
-            "HTTP",
-            response.status,
-            url
-          );
           return null;
         }
 
-        return await response.text();
+        const html =
+          await response.text();
+
+        return {
+          url,
+          html
+        };
 
       } catch (error) {
         console.error(
-          "Fetch failed:",
+          "Fetch error:",
           url,
           error.message
         );
+
         return null;
 
       } finally {
@@ -723,7 +466,21 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // EXTRACT LINKS
+    // PAGE TITLE
+    // ============================================================
+    function getTitle(html) {
+      const match =
+        html.match(
+          /<title[^>]*>([\s\S]*?)<\/title>/i
+        );
+
+      return match
+        ? htmlToText(match[1])
+        : "";
+    }
+
+    // ============================================================
+    // EXTRACT INTERNAL LINKS
     // ============================================================
     function extractLinks(html) {
       const links = [];
@@ -734,41 +491,64 @@ export default async function handler(req, res) {
       let match;
 
       while (
-        (match =
-          regex.exec(html)) !== null
+        (match = regex.exec(html)) !== null
       ) {
         try {
-          const url =
-            new URL(
-              match[1],
-              SITE
-            ).href;
+          const href =
+            match[1].trim();
 
           if (
-            !url.startsWith(SITE)
+            !href ||
+            href.startsWith("#") ||
+            href.startsWith("mailto:") ||
+            href.startsWith("tel:")
+          ) {
+            continue;
+          }
+
+          const url =
+            new URL(
+              href,
+              SITE
+            );
+
+          if (
+            url.origin !==
+            new URL(SITE).origin
+          ) {
+            continue;
+          }
+
+          // Skip obvious non-HTML files.
+          const pathname =
+            url.pathname.toLowerCase();
+
+          if (
+            /\.(pdf|jpg|jpeg|png|gif|webp|svg|zip)$/i.test(
+              pathname
+            )
           ) {
             continue;
           }
 
           links.push({
-            url,
-            text:
-              htmlToText(
-                match[2]
-              )
+            url: url.href.split("#")[0],
+            text: htmlToText(
+              match[2]
+            )
           });
 
         } catch {
-          // Ignore invalid links
+          // Ignore invalid URLs.
         }
       }
 
       return [
         ...new Map(
           links.map(
-            x => [
-              x.url,
-              x
+            item => [
+              item.url,
+              item
             ]
           )
         ).values()
@@ -776,371 +556,464 @@ export default async function handler(req, res) {
     }
 
     // ============================================================
-    // FETCH HUB
+    // FETCH ALL HUBS
     // ============================================================
-    let hubHtml = null;
-
-    if (hubUrl) {
-      hubHtml =
-        await fetchPage(
-          hubUrl
-        );
-    }
-
-    // ============================================================
-    // FIND EXACT EXERCISE LINK
-    // ============================================================
-    let targetLinks = [];
-
-    if (
-      hubHtml &&
-      exercise
-    ) {
-      const allLinks =
-        extractLinks(
-          hubHtml
-        );
-
-      const exerciseText =
-        `exercise ${exercise.unit}.${exercise.exercise}`;
-
-      targetLinks =
-        allLinks.filter(
-          link => {
-            const text =
-              normalize(
-                link.text
-              );
-
-            const url =
-              normalize(
-                link.url
-              );
-
-            return (
-              text.includes(
-                exerciseText
-              ) ||
-              (
-                url.includes(
-                  `exercise${exercise.unit}`
-                ) &&
-                url.includes(
-                  `${exercise.unit}.${exercise.exercise}`
-                )
-              ) ||
-              (
-                url.includes(
-                  `unit${exercise.unit}`
-                ) &&
-                url.includes(
-                  `exercise${exercise.exercise}`
-                )
-              )
-            );
-          }
-        );
-
-      // A simpler and more reliable check:
-      if (
-        targetLinks.length === 0
-      ) {
-        targetLinks =
-          allLinks.filter(
-            link => {
-              const text =
-                normalize(
-                  link.text
-                );
-
-              return (
-                text.includes(
-                  `exercise ${exercise.unit}.${exercise.exercise}`
-                ) ||
-                text.includes(
-                  `exercise ${exercise.unit} ${exercise.exercise}`
-                )
-              );
-            }
-          );
-      }
-    }
-
-    // ============================================================
-    // FIND CHAPTER RESOURCE LINKS
-    // ============================================================
-    if (
-      hubHtml &&
-      chapter &&
-      !exercise
-    ) {
-      const allLinks =
-        extractLinks(
-          hubHtml
-        );
-
-      const chapterText =
-        `chapter ${chapter}`;
-
-      targetLinks =
-        allLinks.filter(
-          link => {
-            const text =
-              normalize(
-                link.text
-              );
-
-            const url =
-              normalize(
-                link.url
-              );
-
-            return (
-              text.includes(
-                chapterText
-              ) ||
-              url.includes(
-                `chapter${chapter}`
-              ) ||
-              url.includes(
-                `chapter-${chapter}`
-              ) ||
-              url.includes(
-                `unit${chapter}`
-              )
-            );
-          }
-        );
-    }
-
-    // ============================================================
-    // SOURCE URLS
-    // ============================================================
-    const sourceUrls = [];
-
-    // Exact exercise pages first
-    for (
-      const link of targetLinks
-    ) {
-      if (
-        !sourceUrls.includes(
-          link.url
+    const hubResults =
+      await Promise.all(
+        selectedHubs.map(
+          url =>
+            fetchPage(
+              url
+            )
         )
-      ) {
-        sourceUrls.push(
-          link.url
-        );
-      }
-    }
+      );
 
-    // Hub second
-    if (
-      hubUrl &&
-      !sourceUrls.includes(
-        hubUrl
-      )
+    const validHubs =
+      hubResults.filter(
+        Boolean
+      );
+
+    // ============================================================
+    // DISCOVER LINKS FROM HUBS
+    // ============================================================
+    let discoveredLinks = [];
+
+    for (
+      const hub of validHubs
     ) {
-      sourceUrls.push(
-        hubUrl
+      discoveredLinks.push(
+        ...extractLinks(
+          hub.html
+        )
       );
     }
 
-    // ============================================================
-    // FETCH SOURCE PAGES
-    // ============================================================
-    const pages = [];
+    discoveredLinks = [
+      ...new Map(
+        discoveredLinks.map(
+          item => [
+            item.url,
+            item
+          ]
+        )
+      ).values()
+    ];
 
-    for (
-      const url of sourceUrls.slice(
-        0,
-        8
-      )
-    ) {
-      const html =
-        await fetchPage(
-          url
+    // ============================================================
+    // EXACT EXERCISE SEARCH
+    //
+    // This is the important part for:
+    //
+    // exercise 6.2 math 10
+    //
+    // It finds the actual link on your Math hub.
+    // ============================================================
+    let exactExerciseLinks = [];
+
+    if (exercise) {
+      const target =
+        `exercise ${exercise.unit}.${exercise.exercise}`;
+
+      exactExerciseLinks =
+        discoveredLinks.filter(
+          link => {
+            const text =
+              normalize(
+                link.text
+              );
+
+            const url =
+              normalize(
+                link.url
+              );
+
+            return (
+              text.includes(
+                target
+              ) ||
+              text.includes(
+                `exercise ${exercise.unit} ${exercise.exercise}`
+              ) ||
+              (
+                url.includes(
+                  `exercise`
+                ) &&
+                url.includes(
+                  `${exercise.unit}`
+                ) &&
+                url.includes(
+                  `${exercise.exercise}`
+                )
+              )
+            );
+          }
         );
+    }
 
-      if (!html) {
-        continue;
+    // ============================================================
+    // PRIORITY URLS
+    // ============================================================
+    let priorityUrls = [];
+
+    // Exact exercise pages first.
+    for (
+      const link
+      of exactExerciseLinks
+    ) {
+      priorityUrls.push(
+        link.url
+      );
+    }
+
+    // Then chapter/resource links.
+    for (
+      const link
+      of discoveredLinks
+    ) {
+      if (
+        priorityUrls.length >= 20
+      ) {
+        break;
       }
 
-      const titleMatch =
-        html.match(
-          /<title[^>]*>([\s\S]*?)<\/title>/i
+      const text =
+        normalize(
+          link.text
         );
 
-      pages.push({
-        url,
-        title:
-          titleMatch
-            ? htmlToText(
-                titleMatch[1]
-              )
-            : "",
-        text:
-          htmlToText(
-            html
+      const url =
+        normalize(
+          link.url
+        );
+
+      let useful = false;
+
+      if (chapter) {
+        if (
+          text.includes(
+            `chapter ${chapter}`
+          ) ||
+          url.includes(
+            `chapter${chapter}`
+          ) ||
+          url.includes(
+            `chapter-${chapter}`
           )
-      });
+        ) {
+          useful = true;
+        }
+      }
+
+      // Useful academic pages.
+      if (
+        /short|exercise|question|crq|long|numerical|mcq|definition|formula|chapter|solution|notes/.test(
+          text
+        )
+      ) {
+        useful = true;
+      }
+
+      if (
+        useful &&
+        !priorityUrls.includes(
+          link.url
+        )
+      ) {
+        priorityUrls.push(
+          link.url
+        );
+      }
     }
 
-    // ============================================================
-    // IMPORTANT: NO SOURCE = NO ANSWER
-    // ============================================================
-    if (
-      pages.length === 0
+    // Add general discovered pages.
+    for (
+      const link
+      of discoveredLinks
     ) {
-      return res.status(200).json({
-        reply:
-          "I couldn't access the relevant Hira Academy material right now. Please try again in a moment."
-      });
+      if (
+        priorityUrls.length >= 60
+      ) {
+        break;
+      }
+
+      if (
+        !priorityUrls.includes(
+          link.url
+        )
+      ) {
+        priorityUrls.push(
+          link.url
+        );
+      }
     }
 
     // ============================================================
-    // SCORE PAGES
+    // FETCH DISCOVERED PAGES
+    //
+    // We limit concurrency to avoid overloading your website.
+    // ============================================================
+    async function fetchInBatches(
+      urls,
+      batchSize = 8
+    ) {
+      const results = [];
+
+      for (
+        let i = 0;
+        i < urls.length;
+        i += batchSize
+      ) {
+        const batch =
+          urls.slice(
+            i,
+            i + batchSize
+          );
+
+        const batchResults =
+          await Promise.all(
+            batch.map(
+              url =>
+                fetchPage(
+                  url,
+                  5000
+                )
+            )
+          );
+
+        results.push(
+          ...batchResults.filter(
+            Boolean
+          )
+        );
+
+        // Stop after enough pages have been collected.
+        if (
+          results.length >= 50
+        ) {
+          break;
+        }
+      }
+
+      return results;
+    }
+
+    const discoveredPages =
+      await fetchInBatches(
+        priorityUrls,
+        8
+      );
+
+    // ============================================================
+    // COMBINE HUBS + DISCOVERED PAGES
+    // ============================================================
+    const allPages = [
+      ...validHubs,
+      ...discoveredPages
+    ];
+
+    const uniquePages = [
+      ...new Map(
+        allPages.map(
+          page => [
+            page.url,
+            page
+          ]
+        )
+      ).values()
+    ];
+
+    // ============================================================
+    // SCORE PAGE
     // ============================================================
     function scorePage(page) {
       const title =
         normalize(
-          page.title
+          getTitle(
+            page.html
+          )
         );
 
       const text =
         normalize(
-          page.text
+          htmlToText(
+            page.html
+          )
+        );
+
+      const url =
+        normalize(
+          page.url
         );
 
       let score = 0;
 
+      // ----------------------------------------------------------
       // Exact exercise
-      if (
-        exercise
-      ) {
-        const e =
+      // ----------------------------------------------------------
+      if (exercise) {
+        const target =
           `exercise ${exercise.unit}.${exercise.exercise}`;
 
         if (
-          title.includes(e)
+          title.includes(
+            target
+          )
         ) {
           score += 1000;
         }
 
         if (
-          text.includes(e)
+          text.includes(
+            target
+          )
         ) {
-          score += 300;
+          score += 400;
         }
 
         if (
-          page.url
-            .toLowerCase()
-            .includes(
-              `exercise-${exercise.unit}-${exercise.exercise}`
-            )
+          url.includes(
+            `exercise`
+          ) &&
+          url.includes(
+            `${exercise.unit}`
+          ) &&
+          url.includes(
+            `${exercise.exercise}`
+          )
         ) {
           score += 1000;
-        }
-
-        if (
-          page.url
-            .toLowerCase()
-            .includes(
-              `exercise${exercise.unit}`
-            )
-        ) {
-          score += 300;
         }
       }
 
+      // ----------------------------------------------------------
+      // Exact question words
+      // ----------------------------------------------------------
+      const questionWords =
+        normalizedQuestion
+          .split(/\s+/)
+          .filter(
+            word =>
+              word.length >= 4
+          )
+          .slice(0, 12);
+
+      for (
+        const word
+        of questionWords
+      ) {
+        if (
+          title.includes(
+            word
+          )
+        ) {
+          score += 20;
+        }
+
+        if (
+          text.includes(
+            word
+          )
+        ) {
+          score += 5;
+        }
+      }
+
+      // ----------------------------------------------------------
       // Subject
+      // ----------------------------------------------------------
       if (
-        subject === "mathematics" &&
-        (
+        subject === "mathematics"
+      ) {
+        if (
           title.includes("math") ||
-          title.includes("mathematics")
-        )
-      ) {
-        score += 200;
+          title.includes("mathematics") ||
+          url.includes("math")
+        ) {
+          score += 150;
+        }
       }
 
       if (
-        subject === "physics" &&
-        title.includes("physics")
+        subject === "physics"
       ) {
-        score += 200;
+        if (
+          title.includes("physics") ||
+          url.includes("physics")
+        ) {
+          score += 150;
+        }
       }
 
+      // ----------------------------------------------------------
       // Class
-      if (
-        grade === 10 &&
-        (
+      // ----------------------------------------------------------
+      if (grade === 10) {
+        if (
           title.includes("10th") ||
           title.includes("class 10") ||
-          page.url.includes("10th")
-        )
-      ) {
-        score += 150;
+          url.includes("10th")
+        ) {
+          score += 100;
+        }
       }
 
-      if (
-        grade === 9 &&
-        (
+      if (grade === 9) {
+        if (
           title.includes("9th") ||
           title.includes("class 9") ||
-          page.url.includes("9th")
-        )
-      ) {
-        score += 150;
+          url.includes("9th")
+        ) {
+          score += 100;
+        }
       }
 
+      // ----------------------------------------------------------
       // Chapter
-      if (
-        chapter
-      ) {
+      // ----------------------------------------------------------
+      if (chapter) {
         if (
           title.includes(
             `chapter ${chapter}`
           )
         ) {
-          score += 300;
+          score += 250;
         }
 
         if (
-          page.url
-            .toLowerCase()
-            .includes(
-              `chapter${chapter}`
-            )
+          url.includes(
+            `chapter${chapter}`
+          ) ||
+          url.includes(
+            `chapter-${chapter}`
+          )
         ) {
-          score += 300;
+          score += 250;
         }
       }
 
-      // Exact current question
-      if (
-        normalizedQuestion.length > 7 &&
-        text.includes(
-          normalizedQuestion
-        )
-      ) {
-        score += 1000;
-      }
-
-      return score;
+      return {
+        score,
+        title,
+        text
+      };
     }
 
+    // ============================================================
+    // RANK PAGES
+    // ============================================================
     const rankedPages =
-      pages
-        .map(
-          page => ({
+      uniquePages
+        .map(page => {
+          const result =
+            scorePage(
+              page
+            );
+
+          return {
             ...page,
-            score:
-              scorePage(
-                page
-              )
-          })
-        )
+            ...result
+          };
+        })
         .sort(
           (a, b) =>
             b.score -
@@ -1148,20 +1021,47 @@ export default async function handler(req, res) {
         );
 
     // ============================================================
-    // BUILD SOURCE CONTEXT
+    // REQUIRE A REAL MATCH
     // ============================================================
+    const bestPage =
+      rankedPages[0];
+
+    if (
+      !bestPage ||
+      bestPage.score < 10
+    ) {
+      return res.status(200).json({
+        reply:
+          "I couldn't find this information in the current Hira Academy material."
+      });
+    }
+
+    // ============================================================
+    // BUILD RELEVANT SOURCE CONTENT
+    //
+    // Use the best pages, not random site content.
+    // ============================================================
+    const sourcePages =
+      rankedPages
+        .filter(
+          page =>
+            page.score >=
+            Math.max(
+              10,
+              bestPage.score - 80
+            )
+        )
+        .slice(0, 5);
+
     let sourceContext = "";
 
     for (
       const page
-      of rankedPages.slice(
-        0,
-        4
-      )
+      of sourcePages
     ) {
       sourceContext += `
 ==================================================
-HIRA ACADEMY SOURCE
+SOURCE PAGE
 ==================================================
 
 TITLE:
@@ -1173,7 +1073,7 @@ ${page.url}
 CONTENT:
 ${page.text.substring(
         0,
-        12000
+        18000
       )}
 
 ==================================================
@@ -1181,7 +1081,7 @@ ${page.text.substring(
     }
 
     // ============================================================
-    // GEMINI CONVERSATION
+    // GEMINI CONTENTS
     // ============================================================
     const contents =
       messages
@@ -1191,6 +1091,7 @@ ${page.text.substring(
               m.role === "user"
                 ? "user"
                 : "model",
+
             parts: [
               {
                 text:
@@ -1216,13 +1117,92 @@ ${page.text.substring(
 You are the official Hira Academy Assistant.
 
 Website:
-https://hiraacademy.com.pk/
+${SITE}
 
-Your answers MUST be based ONLY on the Hira Academy
-source material supplied below.
+Your job is to answer students using the CURRENT Hira
+Academy website material supplied below.
 
 ==================================================
-DETECTED CONTEXT
+IMPORTANT RULE
+==================================================
+
+The Hira Academy source material is the authority.
+
+DO NOT answer from old knowledge.
+
+DO NOT use your pretrained knowledge to replace missing
+Hira Academy content.
+
+DO NOT invent information.
+
+DO NOT make up textbook answers.
+
+If the requested information is not contained in the
+supplied Hira Academy material, say:
+
+"I couldn't find this information in the current Hira Academy material."
+
+Do not then provide a general knowledge answer.
+
+==================================================
+CONVERSATION CONTEXT
+==================================================
+
+Use the previous conversation.
+
+For example:
+
+Student:
+"exercise 6.2 class 10"
+
+Student:
+"why?"
+
+The second question refers to Exercise 6.2.
+
+Likewise:
+
+Student:
+"What is the right hand grip rule?"
+
+Student:
+"explain it"
+
+The second question refers to the Right-Hand Grip Rule.
+
+Never lose the context unnecessarily.
+
+==================================================
+ANSWER STYLE
+==================================================
+
+Use the wording and terminology of Hira Academy as
+closely as possible.
+
+For a definition:
+Give the relevant Hira Academy definition.
+
+For a short question:
+Give the Hira Academy answer directly.
+
+For an exercise:
+Use the actual Hira Academy exercise/solution page.
+
+For a numerical:
+Use the Hira Academy method, formulas, working and answer
+when present.
+
+For a follow-up:
+Continue from the previous question using the same source.
+
+Do not add unrelated information.
+
+Do not cite another website.
+
+Do not mention that you are using a web crawler.
+
+==================================================
+CURRENT CONTEXT
 ==================================================
 
 Class:
@@ -1241,100 +1221,31 @@ ${
     : "Not specified"
 }
 
-==================================================
-STRICT SOURCE RULE
-==================================================
-
-Hira Academy material has absolute priority.
-
-DO NOT answer from your pretrained knowledge.
-
-DO NOT use an old textbook answer.
-
-DO NOT invent an answer.
-
-DO NOT add outside information.
-
-If the answer is present in the Hira Academy material,
-answer from that material.
-
-If the answer is NOT present in the supplied Hira
-Academy material, respond exactly:
-
-"I couldn't find this information in the current Hira Academy material."
-
-Do not provide a general knowledge answer afterward.
+Student's latest question:
+${question}
 
 ==================================================
-CONVERSATION CONTEXT
-==================================================
-
-The student may ask follow-up questions such as:
-
-"why?"
-"how?"
-"explain it"
-"solve it"
-"what about this?"
-"give another example"
-
-Use the previous conversation to understand what
-"it", "this", "that", or "why" refers to.
-
-Do NOT require the student to repeat the topic.
-
-==================================================
-ANSWER STYLE
-==================================================
-
-For a definition:
-Give the relevant Hira Academy definition.
-
-For a short question:
-Give the corresponding Hira Academy answer.
-
-For an exercise:
-Use the exact Hira Academy exercise page supplied.
-
-For a numerical:
-Use the Hira Academy solution and preserve formulas,
-working and final answer.
-
-For a follow-up:
-Answer the follow-up using the same Hira Academy
-source/context.
-
-Do not unnecessarily expand the answer.
-
-Do not combine unrelated pages.
-
-Preserve Hira Academy terminology and wording as much
-as possible.
-
-==================================================
-SOURCE
-==================================================
-
-When an answer is found, finish with:
-
-Source: Hira Academy
-URL: [actual source URL]
-
-Use the URL of the Hira Academy page from which the
-answer was obtained.
-
-==================================================
-HIRA ACADEMY MATERIAL
+SOURCE MATERIAL
 ==================================================
 
 ${sourceContext}
+
+==================================================
+FINAL SOURCE RULE
+==================================================
+
+The answer must be supported by the source material above.
+
+Do not create a source URL yourself.
+
+The backend will add the actual source link.
 `
         }
       ]
     };
 
     // ============================================================
-    // GEMINI
+    // GEMINI API
     // ============================================================
     const response =
       await fetch(
@@ -1355,7 +1266,7 @@ ${sourceContext}
 
             generationConfig: {
               temperature: 0,
-              maxOutputTokens: 1000
+              maxOutputTokens: 1200
             }
           })
         }
@@ -1380,9 +1291,9 @@ ${sourceContext}
     }
 
     // ============================================================
-    // RESPONSE
+    // GET GEMINI ANSWER
     // ============================================================
-    const reply =
+    let reply =
       data
         ?.candidates?.[0]
         ?.content
@@ -1400,8 +1311,22 @@ ${sourceContext}
       });
     }
 
+    // ============================================================
+    // ADD REAL SOURCE LINK
+    //
+    // This is NOT generated by Gemini.
+    // It comes directly from the page we actually fetched.
+    // ============================================================
+    reply +=
+      `\n\n---\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${bestPage.url})`;
+
+    // ============================================================
+    // RETURN
+    // ============================================================
     return res.status(200).json({
-      reply
+      reply,
+      sourceUrl: bestPage.url,
+      sourceTitle: bestPage.title
     });
 
   } catch (error) {
