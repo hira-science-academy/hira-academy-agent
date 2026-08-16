@@ -3,7 +3,7 @@ export default async function handler(req, res) {
   // CORS
   // =========================================================
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS,POST");
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
 
   if (req.method === "OPTIONS") {
@@ -11,15 +11,13 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "Method not allowed"
-    });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const API_KEY = process.env.GEMINI_API_KEY;
 
-    if (!apiKey) {
+    if (!API_KEY) {
       return res.status(500).json({
         error: "GEMINI_API_KEY is missing on Vercel."
       });
@@ -58,11 +56,11 @@ export default async function handler(req, res) {
         m.content.trim()
     );
 
-    const latestUserMessage =
+    const latest =
       userMessages[userMessages.length - 1];
 
     const question =
-      latestUserMessage?.content?.trim();
+      latest?.content?.trim();
 
     if (!question) {
       return res.status(400).json({
@@ -74,7 +72,7 @@ export default async function handler(req, res) {
     const SITEMAP = `${SITE}/sitemap.xml`;
 
     // =======================================================
-    // TEXT NORMALIZATION
+    // NORMALIZE TEXT
     // =======================================================
     function normalize(text) {
       return String(text || "")
@@ -85,59 +83,199 @@ export default async function handler(req, res) {
         .replace(/&#39;/gi, "'")
         .replace(/&#x27;/gi, "'")
         .replace(/<[^>]*>/g, " ")
-        .replace(/[^\p{L}\p{N}\s.-]/gu, " ")
+        .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
     // =======================================================
-    // DETECT WHETHER THIS IS A NEW QUESTION
+    // REMOVE COMMON QUESTION WORDS
     // =======================================================
-    function isShortFollowUp(text) {
-      const x = normalize(text);
+    const STOP_WORDS = new Set([
+      "what",
+      "what's",
+      "whats",
+      "is",
+      "are",
+      "was",
+      "were",
+      "the",
+      "a",
+      "an",
+      "of",
+      "in",
+      "on",
+      "at",
+      "for",
+      "to",
+      "from",
+      "and",
+      "or",
+      "but",
+      "why",
+      "how",
+      "does",
+      "do",
+      "did",
+      "can",
+      "could",
+      "would",
+      "should",
+      "will",
+      "please",
+      "tell",
+      "me",
+      "about",
+      "explain",
+      "define",
+      "definition",
+      "describe",
+      "give",
+      "show",
+      "find",
+      "according",
+      "hira",
+      "academy",
+      "class",
+      "grade",
+      "9th",
+      "10th",
+      "ninth",
+      "tenth"
+    ]);
 
-      return (
-        /^(why|how|explain|explain this|explain it|what does this mean|what is meant by this|tell me more|more details|more detail|continue|solve it|solve this|answer it|give more|give more detail|meaning)\??$/.test(x)
-      );
+    function importantWords(text) {
+      return [
+        ...new Set(
+          normalize(text)
+            .split(/\s+/)
+            .filter(
+              word =>
+                word.length >= 3 &&
+                !STOP_WORDS.has(word)
+            )
+        )
+      ];
     }
 
-    const isFollowUp =
-      isShortFollowUp(question);
-
     // =======================================================
-    // SEARCH QUERY
+    // SPECIAL CONCEPT PHRASES
     //
-    // IMPORTANT:
-    // An independent question gets a fresh search.
+    // These prevent generic words from beating an exact topic.
     // =======================================================
-    let searchQuestion = question;
+    const CONCEPTS = [
+      [
+        "right hand grip rule",
+        [
+          "right hand grip rule",
+          "right-hand grip rule",
+          "right hand grip",
+          "right-hand grip"
+        ]
+      ],
+      [
+        "coriolis effect",
+        [
+          "coriolis effect",
+          "coriolis force"
+        ]
+      ],
+      [
+        "fleming left hand rule",
+        [
+          "fleming's left hand rule",
+          "fleming left hand rule",
+          "left hand rule"
+        ]
+      ],
+      [
+        "electromagnetic induction",
+        [
+          "electromagnetic induction"
+        ]
+      ],
+      [
+        "faraday law",
+        [
+          "faraday's law",
+          "faraday law"
+        ]
+      ],
+      [
+        "lenz law",
+        [
+          "lenz's law",
+          "lenz law"
+        ]
+      ],
+      [
+        "magnetic field",
+        [
+          "magnetic field"
+        ]
+      ],
+      [
+        "electric motor",
+        [
+          "electric motor",
+          "dc motor"
+        ]
+      ],
+      [
+        "ac generator",
+        [
+          "ac generator",
+          "alternating current generator"
+        ]
+      ],
+      [
+        "right hand rule",
+        [
+          "right hand rule",
+          "right-hand rule"
+        ]
+      ]
+    ];
 
-    if (
-      isFollowUp &&
-      userMessages.length >= 2
-    ) {
-      searchQuestion =
-        `${userMessages[userMessages.length - 2].content} ${question}`;
+    function detectConcept(text) {
+      const q = normalize(text);
+
+      for (const [name, phrases] of CONCEPTS) {
+        for (const phrase of phrases) {
+          if (q.includes(normalize(phrase))) {
+            return {
+              name,
+              phrases: phrases.map(normalize)
+            };
+          }
+        }
+      }
+
+      return null;
     }
+
+    const concept = detectConcept(question);
 
     // =======================================================
     // CLASS
     // =======================================================
     function detectClass(text) {
-      const x = normalize(text);
+      const q = normalize(text);
 
       if (
-        /\bclass\s*10\b/.test(x) ||
-        /\b10th\b/.test(x) ||
-        /\bgrade\s*10\b/.test(x)
+        /\b10th\b/.test(q) ||
+        /\bclass 10\b/.test(q) ||
+        /\bgrade 10\b/.test(q) ||
+        /\btenth class\b/.test(q)
       ) {
         return 10;
       }
 
       if (
-        /\bclass\s*9\b/.test(x) ||
-        /\b9th\b/.test(x) ||
-        /\bgrade\s*9\b/.test(x)
+        /\b9th\b/.test(q) ||
+        /\bclass 9\b/.test(q) ||
+        /\bgrade 9\b/.test(q) ||
+        /\bninth class\b/.test(q)
       ) {
         return 9;
       }
@@ -149,44 +287,34 @@ export default async function handler(req, res) {
     // SUBJECT
     // =======================================================
     function detectSubject(text) {
-      const x = normalize(text);
+      const q = normalize(text);
 
       if (
-        /\bmath\b/.test(x) ||
-        /\bmaths\b/.test(x) ||
-        /\bmathematics\b/.test(x) ||
-        /\balgebra\b/.test(x) ||
-        /\bmatrix\b/.test(x) ||
-        /\bmatrices\b/.test(x) ||
-        /\bvector\b/.test(x) ||
-        /\bvectors\b/.test(x) ||
-        /\btrigonometry\b/.test(x) ||
-        /\bprobability\b/.test(x) ||
-        /\bgeometry\b/.test(x)
+        /\bmath\b/.test(q) ||
+        /\bmaths\b/.test(q) ||
+        /\bmathematics\b/.test(q) ||
+        /\bvector\b/.test(q) ||
+        /\bvectors\b/.test(q) ||
+        /\balgebra\b/.test(q) ||
+        /\btrigonometry\b/.test(q)
       ) {
         return "math";
       }
 
       if (
-        /\bphysics\b/.test(x) ||
-        /\belectromagnetism\b/.test(x) ||
-        /\belectromagnetic\b/.test(x) ||
-        /\bmagnetic\b/.test(x) ||
-        /\bmagnetic field\b/.test(x) ||
-        /\bsolenoid\b/.test(x) ||
-        /\bfleming\b/.test(x) ||
-        /\bfaraday\b/.test(x) ||
-        /\blenz\b/.test(x) ||
-        /\bmotor\b/.test(x) ||
-        /\bgenerator\b/.test(x) ||
-        /\btransformer\b/.test(x) ||
-        /\bdiode\b/.test(x) ||
-        /\bsemiconductor\b/.test(x) ||
-        /\bradiation\b/.test(x) ||
-        /\bnuclear\b/.test(x) ||
-        /\bcoriolis\b/.test(x) ||
-        /\bforce\b/.test(x) ||
-        /\bmagnet\b/.test(x)
+        /\bphysics\b/.test(q) ||
+        /\bmagnetic\b/.test(q) ||
+        /\bmagnetism\b/.test(q) ||
+        /\bsolenoid\b/.test(q) ||
+        /\bfleming\b/.test(q) ||
+        /\bfaraday\b/.test(q) ||
+        /\blenz\b/.test(q) ||
+        /\bmotor\b/.test(q) ||
+        /\bgenerator\b/.test(q) ||
+        /\btransformer\b/.test(q) ||
+        /\bsemiconductor\b/.test(q) ||
+        /\bdiode\b/.test(q) ||
+        /\bcoriolis\b/.test(q)
       ) {
         return "physics";
       }
@@ -198,16 +326,12 @@ export default async function handler(req, res) {
     // EXERCISE
     // =======================================================
     function detectExercise(text) {
-      const x = normalize(text);
+      const q = normalize(text);
 
       const match =
-        x.match(
-          /\bexercise\s+(\d{1,2})\.(\d{1,2})\b/
-        );
+        q.match(/\bexercise\s+(\d+)\.(\d+)\b/);
 
-      if (!match) {
-        return null;
-      }
+      if (!match) return null;
 
       return {
         unit: Number(match[1]),
@@ -219,135 +343,50 @@ export default async function handler(req, res) {
     // CHAPTER
     // =======================================================
     function detectChapter(text) {
-      const x = normalize(text);
+      const q = normalize(text);
 
       const match =
-        x.match(
-          /\bchapter\s+(\d{1,2})\b/
-        );
+        q.match(/\bchapter\s+(\d+)\b/);
 
       return match
         ? Number(match[1])
         : null;
     }
 
-    const grade =
-      detectClass(searchQuestion);
+    const grade = detectClass(question);
+    const subject = detectSubject(question);
+    const exercise = detectExercise(question);
+    const chapter = detectChapter(question);
 
-    const subject =
-      detectSubject(searchQuestion);
-
-    const exercise =
-      detectExercise(searchQuestion);
-
-    const chapter =
-      detectChapter(searchQuestion);
-
-    // =======================================================
-    // IMPORTANT SEARCH WORDS
-    // =======================================================
-    const STOP_WORDS = new Set([
-      "what",
-      "what's",
-      "whats",
-      "is",
-      "are",
-      "the",
-      "a",
-      "an",
-      "of",
-      "in",
-      "on",
-      "for",
-      "to",
-      "and",
-      "or",
-      "does",
-      "do",
-      "why",
-      "how",
-      "can",
-      "could",
-      "would",
-      "should",
-      "please",
-      "tell",
-      "me",
-      "about",
-      "explain",
-      "define",
-      "definition",
-      "give",
-      "show",
-      "find",
-      "class",
-      "grade",
-      "10th",
-      "9th",
-      "math",
-      "maths",
-      "mathematics",
-      "physics",
-      "chapter",
-      "exercise"
-    ]);
-
-    function getSearchTerms(text) {
-      return [
-        ...new Set(
-          normalize(text)
-            .split(/\s+/)
-            .map(x => x.trim())
-            .filter(
-              x =>
-                x.length >= 3 &&
-                !STOP_WORDS.has(x)
-            )
-        )
-      ];
-    }
-
-    const searchTerms =
-      getSearchTerms(searchQuestion);
+    const words = importantWords(question);
 
     // =======================================================
     // FETCH WITH TIMEOUT
     // =======================================================
-    async function fetchUrl(
-      url,
-      timeout = 7000
-    ) {
-      const controller =
-        new AbortController();
+    async function fetchPage(url, timeout = 7000) {
+      const controller = new AbortController();
 
-      const timer =
-        setTimeout(
-          () => controller.abort(),
-          timeout
-        );
+      const timer = setTimeout(
+        () => controller.abort(),
+        timeout
+      );
 
       try {
-        const response =
-          await fetch(url, {
-            signal: controller.signal,
-            headers: {
-              "User-Agent":
-                "Hira-Academy-Assistant/1.0",
-              "Accept":
-                "text/html,application/xhtml+xml,application/xml"
-            }
-          });
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent":
+              "Hira-Academy-Assistant/1.0",
+            "Accept":
+              "text/html,application/xhtml+xml"
+          }
+        });
 
-        if (!response.ok) {
-          return null;
-        }
-
-        const text =
-          await response.text();
+        if (!response.ok) return null;
 
         return {
           url,
-          text
+          html: await response.text()
         };
       } catch {
         return null;
@@ -359,8 +398,8 @@ export default async function handler(req, res) {
     // =======================================================
     // SITEMAP
     // =======================================================
-    function extractUrlsFromSitemap(xml) {
-      const result = [];
+    function getSitemapUrls(xml) {
+      const urls = [];
 
       const matches =
         String(xml || "").match(
@@ -375,12 +414,9 @@ export default async function handler(req, res) {
 
         if (!match) continue;
 
-        const url =
-          match[1].trim();
+        const url = match[1].trim();
 
-        if (!url.startsWith(SITE)) {
-          continue;
-        }
+        if (!url.startsWith(SITE)) continue;
 
         if (
           /\.(jpg|jpeg|png|gif|webp|svg|pdf|zip|css|js)$/i.test(
@@ -390,171 +426,132 @@ export default async function handler(req, res) {
           continue;
         }
 
-        result.push(url);
+        urls.push(url);
       }
 
-      return [
-        ...new Set(result)
-      ];
+      return [...new Set(urls)];
     }
 
-    const sitemap =
-      await fetchUrl(
-        SITEMAP,
-        7000
-      );
+    const sitemapPage =
+      await fetchPage(SITEMAP, 7000);
 
-    let siteUrls = sitemap
-      ? extractUrlsFromSitemap(
-          sitemap.text
-        )
+    let siteUrls = sitemapPage
+      ? getSitemapUrls(sitemapPage.html)
       : [];
 
     // =======================================================
-    // FALLBACK PAGES
+    // FALLBACK IMPORTANT PAGES
     // =======================================================
-    const fallbackPages = [
-      `${SITE}/`,
-      `${SITE}/9th-class-notes.html`,
-      `${SITE}/10th-class-notes.html`,
-      `${SITE}/Physics-9th.html`,
-      `${SITE}/Physics-10th.html`,
-      `${SITE}/Mathematics-9th.html`,
-      `${SITE}/Mathematics-10th-New-2026.html`,
-      `${SITE}/Mathematics-10th.html`
-    ];
-
     siteUrls = [
       ...new Set([
         ...siteUrls,
-        ...fallbackPages
+
+        `${SITE}/`,
+        `${SITE}/9th-class-notes.html`,
+        `${SITE}/10th-class-notes.html`,
+        `${SITE}/Physics-9th.html`,
+        `${SITE}/Physics-10th.html`,
+        `${SITE}/Mathematics-9th.html`,
+        `${SITE}/Mathematics-10th-New-2026.html`,
+        `${SITE}/Mathematics-10th.html`
       ])
     ];
 
     // =======================================================
-    // URL PRE-FILTER
+    // URL FILTER
     //
-    // This is ONLY used to reduce the number of pages fetched.
-    // It does NOT decide the final answer.
+    // IMPORTANT:
+    // This only decides which pages to DOWNLOAD.
+    // It does NOT decide which page is the answer.
     // =======================================================
-    function urlLooksRelevant(url) {
-      const x =
-        normalize(url);
+    function urlPriority(url) {
+      const u = normalize(url);
+      let score = 0;
 
-      let points = 0;
-
-      if (subject === "physics") {
-        if (x.includes("physics")) {
-          points += 5;
-        }
+      if (subject === "physics" && u.includes("physics")) {
+        score += 20;
       }
 
-      if (subject === "math") {
-        if (
-          x.includes("math") ||
-          x.includes("mathematics")
-        ) {
-          points += 5;
-        }
+      if (
+        subject === "math" &&
+        (u.includes("math") || u.includes("mathematics"))
+      ) {
+        score += 20;
       }
 
-      if (grade === 10) {
-        if (
-          x.includes("10th") ||
-          x.includes("class-10") ||
-          x.includes("class10")
-        ) {
-          points += 3;
-        }
+      if (
+        grade === 10 &&
+        (
+          u.includes("10th") ||
+          u.includes("class-10") ||
+          u.includes("class10")
+        )
+      ) {
+        score += 10;
       }
 
-      if (grade === 9) {
-        if (
-          x.includes("9th") ||
-          x.includes("class-9") ||
-          x.includes("class9")
-        ) {
-          points += 3;
-        }
+      if (
+        grade === 9 &&
+        (
+          u.includes("9th") ||
+          u.includes("class-9") ||
+          u.includes("class9")
+        )
+      ) {
+        score += 10;
       }
 
       if (exercise) {
         if (
-          x.includes("exercise") &&
-          x.includes(
-            String(exercise.exercise)
-          )
+          u.includes("exercise") &&
+          u.includes(String(exercise.exercise))
         ) {
-          points += 8;
+          score += 30;
         }
 
         if (
-          x.includes(
-            `unit${exercise.unit}`
-          ) ||
-          x.includes(
-            `unit-${exercise.unit}`
-          )
+          u.includes(`unit${exercise.unit}`) ||
+          u.includes(`unit-${exercise.unit}`)
         ) {
-          points += 5;
+          score += 20;
         }
       }
 
       if (chapter) {
         if (
-          x.includes(
-            `chapter${chapter}`
-          ) ||
-          x.includes(
-            `chapter-${chapter}`
-          )
+          u.includes(`chapter${chapter}`) ||
+          u.includes(`chapter-${chapter}`)
         ) {
-          points += 7;
+          score += 20;
         }
       }
 
-      for (const term of searchTerms) {
-        if (x.includes(term)) {
-          points += 1;
-        }
-      }
-
-      return points;
+      return score;
     }
 
-    const prefiltered =
+    const candidateUrls =
       siteUrls
         .map(url => ({
           url,
-          points:
-            urlLooksRelevant(url)
+          score: urlPriority(url)
         }))
-        .sort(
-          (a, b) =>
-            b.points - a.points
-        );
-
-    // Fetch enough pages to find actual content.
-    const urlsToFetch =
-      prefiltered
-        .slice(0, 50)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 80)
         .map(x => x.url);
 
-    const fetchedPages =
-      (
-        await Promise.all(
-          urlsToFetch.map(
-            url =>
-              fetchUrl(
-                url,
-                6500
-              )
-          )
+    // =======================================================
+    // FETCH CANDIDATE PAGES
+    // =======================================================
+    const pages = (
+      await Promise.all(
+        candidateUrls.map(
+          url => fetchPage(url, 6000)
         )
-      ).filter(Boolean);
+      )
+    ).filter(Boolean);
 
     // =======================================================
-    // HTML → CLEAN TEXT
+    // HTML TO TEXT
     // =======================================================
     function htmlToText(html) {
       return String(html || "")
@@ -575,41 +572,17 @@ export default async function handler(req, res) {
           " "
         )
         .replace(
-          /<\/(p|div|section|article|li|h1|h2|h3|h4|h5|h6|tr|td|blockquote)>/gi,
+          /<\/(p|div|section|article|li|h1|h2|h3|h4|h5|h6|tr|td|th|blockquote)>/gi,
           "\n"
         )
-        .replace(
-          /<br\s*\/?>/gi,
-          "\n"
-        )
-        .replace(
-          /<[^>]+>/g,
-          " "
-        )
-        .replace(
-          /&nbsp;/gi,
-          " "
-        )
-        .replace(
-          /&amp;/gi,
-          "&"
-        )
-        .replace(
-          /&quot;/gi,
-          '"'
-        )
-        .replace(
-          /&#39;/gi,
-          "'"
-        )
-        .replace(
-          /&#x27;/gi,
-          "'"
-        )
-        .replace(
-          /\s+/g,
-          " "
-        )
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&#x27;/gi, "'")
+        .replace(/\s+/g, " ")
         .trim();
     }
 
@@ -625,21 +598,115 @@ export default async function handler(req, res) {
     }
 
     // =======================================================
-    // CONTENT MATCHING
-    //
-    // THIS IS THE IMPORTANT PART.
-    //
-    // The actual page text gets searched.
+    // EXTRACT HEADINGS
     // =======================================================
-    function scoreContent(page) {
-      const content =
+    function getHeadings(html) {
+      const headings = [];
+
+      const matches =
+        String(html || "").match(
+          /<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi
+        ) || [];
+
+      for (const item of matches) {
+        const text = normalize(
+          htmlToText(item)
+        );
+
+        if (text) headings.push(text);
+      }
+
+      return headings.join(" ");
+    }
+
+    // =======================================================
+    // FIND WORD POSITIONS
+    // =======================================================
+    function wordPositions(text, word) {
+      const positions = [];
+      let start = 0;
+
+      while (true) {
+        const pos =
+          text.indexOf(word, start);
+
+        if (pos === -1) break;
+
+        positions.push(pos);
+        start = pos + word.length;
+
+        if (positions.length >= 20) break;
+      }
+
+      return positions;
+    }
+
+    // =======================================================
+    // PROXIMITY SCORE
+    //
+    // If important words occur near each other, that is a
+    // much stronger signal than merely occurring somewhere.
+    // =======================================================
+    function proximityScore(text, terms) {
+      if (!terms.length) return 0;
+
+      const positions = [];
+
+      for (const term of terms) {
+        const found =
+          wordPositions(text, term);
+
+        for (const pos of found) {
+          positions.push({
+            term,
+            pos
+          });
+        }
+      }
+
+      if (positions.length < 2) return 0;
+
+      let best = 0;
+
+      for (const a of positions) {
+        for (const b of positions) {
+          if (a.term === b.term) continue;
+
+          const distance =
+            Math.abs(a.pos - b.pos);
+
+          if (distance <= 150) {
+            best = Math.max(best, 100);
+          } else if (distance <= 300) {
+            best = Math.max(best, 70);
+          } else if (distance <= 600) {
+            best = Math.max(best, 40);
+          } else if (distance <= 1200) {
+            best = Math.max(best, 20);
+          }
+        }
+      }
+
+      return best;
+    }
+
+    // =======================================================
+    // SCORE A PAGE
+    // =======================================================
+    function scorePage(page) {
+      const text =
         normalize(
-          htmlToText(page.text)
+          htmlToText(page.html)
         );
 
       const title =
         normalize(
-          getTitle(page.text)
+          getTitle(page.html)
+        );
+
+      const headings =
+        normalize(
+          getHeadings(page.html)
         );
 
       const url =
@@ -648,133 +715,148 @@ export default async function handler(req, res) {
       let score = 0;
 
       // -------------------------------------------------------
-      // SUBJECT
+      // 1. EXACT CONCEPT = VERY STRONG
+      // -------------------------------------------------------
+      if (concept) {
+        let exactFound = false;
+
+        for (const phrase of concept.phrases) {
+          if (text.includes(phrase)) {
+            score += 1000;
+            exactFound = true;
+          }
+
+          if (title.includes(phrase)) {
+            score += 500;
+            exactFound = true;
+          }
+
+          if (headings.includes(phrase)) {
+            score += 700;
+            exactFound = true;
+          }
+        }
+
+        // CRITICAL:
+        // If the question is an exact known concept and this
+        // page does NOT contain the concept, do not allow
+        // generic "physics" words to make it win.
+        if (!exactFound) {
+          score -= 500;
+        }
+      }
+
+      // -------------------------------------------------------
+      // 2. EXACT QUESTION PHRASE
+      // -------------------------------------------------------
+      const normalizedQuestion =
+        normalize(question);
+
+      if (
+        normalizedQuestion.length >= 8 &&
+        text.includes(normalizedQuestion)
+      ) {
+        score += 900;
+      }
+
+      // -------------------------------------------------------
+      // 3. SUBJECT
       // -------------------------------------------------------
       if (subject === "physics") {
-        if (
-          content.includes("physics") ||
-          title.includes("physics") ||
-          url.includes("physics")
-        ) {
-          score += 30;
-        }
+        if (title.includes("physics")) score += 30;
+        if (url.includes("physics")) score += 20;
       }
 
       if (subject === "math") {
         if (
-          content.includes("mathematics") ||
-          content.includes("mathematics") ||
           title.includes("math") ||
-          title.includes("mathematics") ||
-          url.includes("math")
+          title.includes("mathematics")
         ) {
           score += 30;
+        }
+
+        if (
+          url.includes("math") ||
+          url.includes("mathematics")
+        ) {
+          score += 20;
         }
       }
 
       // -------------------------------------------------------
-      // CLASS
+      // 4. CLASS
       // -------------------------------------------------------
       if (grade === 10) {
         if (
-          content.includes("class 10") ||
-          content.includes("10th class") ||
           title.includes("10th") ||
-          url.includes("10th")
+          title.includes("class 10")
         ) {
+          score += 30;
+        }
+
+        if (url.includes("10th")) {
           score += 20;
         }
       }
 
       if (grade === 9) {
         if (
-          content.includes("class 9") ||
-          content.includes("9th class") ||
           title.includes("9th") ||
-          url.includes("9th")
+          title.includes("class 9")
         ) {
+          score += 30;
+        }
+
+        if (url.includes("9th")) {
           score += 20;
         }
       }
 
       // -------------------------------------------------------
-      // EXACT PHRASE MATCH
+      // 5. INDIVIDUAL IMPORTANT WORDS
       // -------------------------------------------------------
-      const exactPhrase =
-        normalize(searchQuestion);
+      let matched = 0;
 
-      if (
-        exactPhrase.length >= 6 &&
-        content.includes(exactPhrase)
-      ) {
-        score += 500;
-      }
-
-      // -------------------------------------------------------
-      // SEARCH TERMS
-      // -------------------------------------------------------
-      let matchedTerms = 0;
-
-      for (const term of searchTerms) {
-        if (
-          content.includes(term)
-        ) {
-          matchedTerms++;
-          score += 20;
+      for (const word of words) {
+        if (text.includes(word)) {
+          matched++;
+          score += 8;
         }
 
-        if (
-          title.includes(term)
-        ) {
-          score += 40;
+        if (title.includes(word)) {
+          score += 25;
+        }
+
+        if (headings.includes(word)) {
+          score += 35;
         }
       }
 
       // -------------------------------------------------------
-      // PHRASE COMBINATIONS
+      // 6. PROXIMITY
       // -------------------------------------------------------
-      for (
-        let i = 0;
-        i < searchTerms.length;
-        i++
-      ) {
-        for (
-          let j = i + 1;
-          j < searchTerms.length;
-          j++
-        ) {
-          const phrase =
-            `${searchTerms[i]} ${searchTerms[j]}`;
-
-          if (
-            content.includes(phrase)
-          ) {
-            score += 70;
-          }
-        }
-      }
+      score += proximityScore(
+        text,
+        words
+      );
 
       // -------------------------------------------------------
-      // EXERCISE
+      // 7. EXERCISE
       // -------------------------------------------------------
       if (exercise) {
-        const exerciseText =
+        const exercisePhrase =
           `exercise ${exercise.unit}.${exercise.exercise}`;
 
         if (
-          content.includes(
-            exerciseText
-          )
+          text.includes(exercisePhrase)
         ) {
-          score += 500;
+          score += 700;
         }
 
         if (
-          title.includes(
-            exerciseText
-          )
+          title.includes(exercisePhrase)
         ) {
-          score += 800;
+          score += 900;
         }
 
         if (
@@ -783,273 +865,296 @@ export default async function handler(req, res) {
             String(exercise.exercise)
           )
         ) {
-          score += 200;
+          score += 300;
         }
       }
 
       // -------------------------------------------------------
-      // CHAPTER
+      // 8. CHAPTER
       // -------------------------------------------------------
       if (chapter) {
+        const chapterPhrase =
+          `chapter ${chapter}`;
+
         if (
-          content.includes(
-            `chapter ${chapter}`
-          )
+          text.includes(chapterPhrase)
         ) {
-          score += 250;
+          score += 300;
         }
 
         if (
-          title.includes(
-            `chapter ${chapter}`
-          )
+          title.includes(chapterPhrase)
         ) {
           score += 500;
         }
       }
 
-      // -------------------------------------------------------
-      // SPECIAL HIGH-VALUE PHYSICS TERMS
-      // -------------------------------------------------------
-      const physicsTerms = [
-        "right hand grip rule",
-        "right-hand grip rule",
-        "fleming left hand rule",
-        "fleming's left hand rule",
-        "solenoid",
-        "magnetic field",
-        "dc motor",
-        "relay",
-        "earth magnetic field",
-        "electromagnetic induction",
-        "faraday law",
-        "lenz law",
-        "transformer",
-        "ac generator",
-        "coriolis effect"
-      ];
-
-      for (
-        const term of physicsTerms
-      ) {
-        if (
-          normalize(searchQuestion)
-            .includes(term)
-        ) {
-          if (
-            content.includes(term)
-          ) {
-            score += 350;
-          }
-        }
-      }
-
       return {
         url: page.url,
-        title: getTitle(page.text),
-        content,
+        title: getTitle(page.html),
+        text,
         score,
-        matchedTerms
+        matched
       };
     }
 
-    const rankedPages =
-      fetchedPages
-        .map(scoreContent)
+    const ranked =
+      pages
+        .map(scorePage)
         .sort(
-          (a, b) =>
-            b.score - a.score
+          (a, b) => b.score - a.score
         );
 
     // =======================================================
-    // IMPORTANT:
-    // SHOW TOP MATCHES IN SERVER LOG
-    // This helps you debug Vercel.
+    // DEBUG LOG
     // =======================================================
     console.log(
-      "HIRA SEARCH:",
-      searchQuestion
+      "QUESTION:",
+      question
     );
 
     console.log(
-      "TOP PAGES:",
-      rankedPages
-        .slice(0, 5)
-        .map(p => ({
-          title: p.title,
-          url: p.url,
-          score: p.score
-        }))
+      "CONCEPT:",
+      concept?.name || "none"
     );
 
-    const bestPage =
-      rankedPages[0];
+    console.log(
+      "TOP SEARCH RESULTS:",
+      ranked.slice(0, 10).map(p => ({
+        score: p.score,
+        title: p.title,
+        url: p.url
+      }))
+    );
+
+    const best = ranked[0];
 
     // =======================================================
-    // NO GOOD MATCH
+    // STRICT SOURCE VALIDATION
+    //
+    // NEVER attach a random Hira page as the source.
     // =======================================================
-    if (
-      !bestPage ||
-      bestPage.score < 40
-    ) {
-      return await geminiFallback(
+    let sourceIsValid = false;
+
+    if (best) {
+      if (concept) {
+        sourceIsValid =
+          concept.phrases.some(
+            phrase =>
+              best.text.includes(phrase)
+          ) ||
+          concept.phrases.some(
+            phrase =>
+              normalize(best.title).includes(
+                phrase
+              )
+          );
+      } else {
+        const matchedImportantWords =
+          words.filter(
+            word =>
+              best.text.includes(word)
+          ).length;
+
+        // Need meaningful matching.
+        sourceIsValid =
+          best.score >= 80 &&
+          (
+            matchedImportantWords >= 2 ||
+            best.score >= 500
+          );
+      }
+    }
+
+    // =======================================================
+    // NO GENUINE SOURCE FOUND
+    // =======================================================
+    if (!best || !sourceIsValid) {
+      return await noSourceResponse(
         question,
         messages,
-        apiKey,
+        API_KEY,
         res
       );
     }
 
     // =======================================================
-    // GET RELEVANT SECTION AROUND MATCHED TERMS
+    // EXTRACT RELEVANT CONTENT
     // =======================================================
-    function extractRelevantText(
-      content,
-      question
+    function extractRelevantSection(
+      text,
+      terms,
+      concept
     ) {
-      const clean =
-        String(content || "");
+      const lower = text.toLowerCase();
 
-      const lower =
-        clean.toLowerCase();
+      let position = -1;
 
-      const terms =
-        getSearchTerms(question)
-          .filter(
-            x => x.length >= 4
-          );
+      // First preference: exact concept
+      if (concept) {
+        for (const phrase of concept.phrases) {
+          const p =
+            lower.indexOf(phrase);
 
-      let bestPosition = -1;
-
-      for (
-        const term of terms
-      ) {
-        const pos =
-          lower.indexOf(term);
-
-        if (
-          pos !== -1 &&
-          (
-            bestPosition === -1 ||
-            pos < bestPosition
-          )
-        ) {
-          bestPosition = pos;
+          if (p !== -1) {
+            position = p;
+            break;
+          }
         }
       }
 
-      if (
-        bestPosition === -1
-      ) {
-        return clean.substring(
-          0,
-          10000
-        );
+      // Second preference: important word
+      if (position === -1) {
+        for (const term of terms) {
+          const p =
+            lower.indexOf(term);
+
+          if (p !== -1) {
+            position = p;
+            break;
+          }
+        }
+      }
+
+      if (position === -1) {
+        return text.substring(0, 8000);
       }
 
       const start =
         Math.max(
           0,
-          bestPosition - 3000
+          position - 2500
         );
 
       const end =
         Math.min(
-          clean.length,
-          bestPosition + 9000
+          text.length,
+          position + 8000
         );
 
-      return clean.substring(
+      return text.substring(
         start,
         end
       );
     }
 
-    const relevantText =
-      extractRelevantText(
-        bestPage.content,
-        searchQuestion
+    const relevant =
+      extractRelevantSection(
+        best.text,
+        words,
+        concept
       );
 
     // =======================================================
-    // DIRECT WEBSITE ANSWER
-    //
-    // If Gemini is unavailable, the chatbot can STILL answer
-    // from the actual Hira Academy page.
+    // GEMINI
     // =======================================================
-    function directWebsiteAnswer(
-      text,
-      question
-    ) {
-      const sentences =
-        text.split(
-          /(?<=[.!?])\s+/
-        );
+    const systemInstruction = {
+      parts: [
+        {
+          text: `
+You are the official Hira Academy Assistant.
 
-      const terms =
-        getSearchTerms(
-          question
-        );
+Website:
+${SITE}
 
-      const candidates =
-        sentences
-          .map(sentence => {
-            const lower =
-              sentence.toLowerCase();
+The following content was found by SEARCHING THE ACTUAL
+Hira Academy webpage.
 
-            let matches = 0;
+SOURCE TITLE:
+${best.title}
 
-            for (
-              const term of terms
-            ) {
-              if (
-                lower.includes(term)
-              ) {
-                matches++;
-              }
-            }
+SOURCE URL:
+${best.url}
 
-            return {
-              sentence,
-              matches
-            };
-          })
-          .filter(
-            x => x.matches > 0
-          )
-          .sort(
-            (a, b) =>
-              b.matches -
-              a.matches
-          )
-          .slice(0, 4);
+SOURCE CONTENT:
+${relevant}
 
-      if (!candidates.length) {
-        return null;
-      }
+============================================================
+STRICT RULES
+============================================================
 
-      return candidates
-        .map(x => x.sentence)
-        .join(" ");
-    }
+1. The source above is the primary source.
 
-    // =======================================================
-    // SEND ONLY RELEVANT HIRA CONTENT TO GEMINI
-    // =======================================================
-    const sourceBlock = `
-HIRA ACADEMY SOURCE
+2. Answer using the supplied Hira Academy content.
 
-Title:
-${bestPage.title}
+3. Do NOT use an old answer from your training when the
+   Hira Academy source provides the information.
 
-URL:
-${bestPage.url}
+4. Do NOT invent information.
 
-Relevant content:
-${relevantText}
-`;
+5. Do NOT claim that a page contains something unless it
+   is actually supported by the supplied source content.
 
-    const recentMessages =
+6. Do NOT use a different Hira Academy page as a substitute.
+
+7. If the supplied source does not answer the question,
+   say:
+
+   "I couldn't find this information in the current Hira
+   Academy material."
+
+8. Keep answers appropriate for Class 9 and Class 10
+   Punjab Board / PECTAA students.
+
+9. For Mathematics, preserve formulas and mathematical
+   notation.
+
+10. For Physics, use the terminology found in the source.
+
+11. Do not add unnecessary information.
+
+============================================================
+IMPORTANT NEW-QUESTION RULE
+============================================================
+
+Treat every independent user question as a NEW question.
+
+For example:
+
+User:
+exercise 6.2 math 10
+
+Then:
+
+User:
+What is the right hand grip rule?
+
+The second question is NOT about Exercise 6.2.
+
+Search/source selection has already been performed for the
+new question. Answer the new question from its own source.
+
+============================================================
+FOLLOW-UP RULE
+============================================================
+
+Only use previous conversation context if the latest
+message is clearly a follow-up such as:
+
+why?
+how?
+explain it
+explain this
+what does this mean?
+tell me more
+solve this
+give more detail
+
+============================================================
+SOURCE LINK
+============================================================
+
+At the end of the answer, provide ONLY this source:
+
+${best.url}
+
+Do not provide links to unrelated Hira Academy pages.
+`
+        }
+      ]
+    };
+
+    const recent =
       messages
         .slice(-8)
         .map(m => ({
@@ -1067,115 +1172,7 @@ ${relevantText}
           ]
         }));
 
-    const systemInstruction = {
-      parts: [
-        {
-          text: `
-You are the official Hira Academy AI teaching assistant.
-
-Hira Academy website:
-${SITE}
-
-========================================================
-SOURCE POLICY
-========================================================
-
-The Hira Academy material below is the PRIMARY source.
-
-Use it as the source of truth.
-
-Do NOT replace it with old information from your training.
-
-Do NOT invent information.
-
-Do NOT invent textbook wording.
-
-Do NOT invent exercise questions.
-
-Do NOT invent URLs.
-
-If the supplied Hira Academy material does not contain
-the answer, say:
-
-"I couldn't find this information in the current Hira Academy material."
-
-========================================================
-NEW QUESTION RULE
-========================================================
-
-Every independent question must be treated as a NEW search.
-
-Example:
-
-Student:
-exercise 6.2 math 10
-
-Then:
-
-Student:
-What is the right hand grip rule?
-
-The second question is independent.
-
-DO NOT answer the second question from Exercise 6.2.
-
-========================================================
-FOLLOW-UP RULE
-========================================================
-
-Only use previous conversation context when the latest
-question is clearly a follow-up such as:
-
-why?
-how?
-explain it
-explain this
-what does this mean?
-tell me more
-solve it
-give more detail
-
-========================================================
-ANSWER STYLE
-========================================================
-
-For a definition:
-Give the definition from Hira Academy.
-
-For a short question:
-Give a concise answer.
-
-For an exercise:
-Use the actual Hira Academy exercise material.
-
-For Mathematics:
-Preserve formulas and mathematical notation.
-
-For Physics:
-Use Hira Academy terminology.
-
-Do not add unnecessary outside information.
-
-========================================================
-SOURCE
-========================================================
-
-${sourceBlock}
-
-========================================================
-CURRENT QUESTION
-========================================================
-
-${question}
-`
-        }
-      ]
-    };
-
-    // =======================================================
-    // GEMINI CALL
-    // =======================================================
-    let geminiResponse;
+    let geminiResponse = null;
 
     try {
       geminiResponse =
@@ -1183,19 +1180,15 @@ ${question}
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
           {
             method: "POST",
-
             headers: {
               "Content-Type":
                 "application/json",
               "x-goog-api-key":
-                apiKey
+                API_KEY
             },
-
             body: JSON.stringify({
               systemInstruction,
-              contents:
-                recentMessages,
-
+              contents: recent,
               generationConfig: {
                 temperature: 0.1,
                 maxOutputTokens: 1000
@@ -1208,46 +1201,24 @@ ${question}
         "Gemini connection error:",
         error
       );
-
-      geminiResponse = null;
     }
 
     // =======================================================
-    // GEMINI FAILED / QUOTA
+    // GEMINI QUOTA / ERROR
     //
-    // DO NOT RETURN AN UNRELATED PAGE.
-    // Return the actual best Hira Academy source.
+    // IMPORTANT:
+    // Do NOT invent an answer.
+    // Return source information instead.
     // =======================================================
     if (
       !geminiResponse ||
       !geminiResponse.ok
     ) {
-      const direct =
-        directWebsiteAnswer(
-          relevantText,
-          question
-        );
-
-      if (direct) {
-        return res.status(200).json({
-          reply:
-            `**According to Hira Academy:**\n\n${direct}\n\n---\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${bestPage.url})`,
-          sourceUrl:
-            bestPage.url,
-          sourceTitle:
-            bestPage.title,
-          websiteFirst: true
-        });
-      }
-
       return res.status(200).json({
         reply:
-          `I found relevant Hira Academy material, but the AI explanation service is temporarily unavailable.\n\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${bestPage.url})`,
-        sourceUrl:
-          bestPage.url,
-        sourceTitle:
-          bestPage.title,
-        websiteFirst: true
+          `I found the relevant Hira Academy material, but the AI explanation service is temporarily unavailable.\n\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${best.url})`,
+        sourceUrl: best.url,
+        sourceTitle: best.title
       });
     }
 
@@ -1265,26 +1236,19 @@ ${question}
 
     if (!reply) {
       reply =
-        directWebsiteAnswer(
-          relevantText,
-          question
-        ) ||
-        "I couldn't find this information in the current Hira Academy material.";
+        "I couldn't generate an answer from the current Hira Academy material.";
     }
 
     // =======================================================
-    // SOURCE
+    // SOURCE LINK
     // =======================================================
     reply +=
-      `\n\n---\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${bestPage.url})`;
+      `\n\n---\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${best.url})`;
 
     return res.status(200).json({
       reply,
-      sourceUrl:
-        bestPage.url,
-      sourceTitle:
-        bestPage.title,
-      websiteFirst: true
+      sourceUrl: best.url,
+      sourceTitle: best.title
     });
 
   } catch (error) {
@@ -1303,61 +1267,16 @@ ${question}
 
 
 // =============================================================
-// GEMINI FALLBACK
-// Used only when the website search genuinely finds nothing.
+// NO SOURCE FOUND
 // =============================================================
-async function geminiFallback(
+async function noSourceResponse(
   question,
   messages,
   apiKey,
   res
 ) {
-  const contents =
-    messages
-      .slice(-6)
-      .map(m => ({
-        role:
-          m.role === "user"
-            ? "user"
-            : "model",
-        parts: [
-          {
-            text:
-              m.content || ""
-          }
-        ]
-      }))
-      .filter(
-        x =>
-          x.parts[0].text.trim()
-      );
-
-  const systemInstruction = {
-    parts: [
-      {
-        text: `
-You are the Hira Academy Assistant.
-
-The Hira Academy website search did not find sufficient
-material for this question.
-
-Do NOT claim that your general knowledge answer came from
-Hira Academy.
-
-Clearly say that the information was not found in the
-current Hira Academy material.
-
-If you provide a general educational explanation, label it
-as general information.
-
-Do not invent a Hira Academy source URL.
-
-Question:
-${question}
-`
-      }
-    ]
-  };
+  // Do NOT give Gemini the ability to invent a Hira Academy
+  // source. We tell it that the website search found nothing.
 
   try {
     const response =
@@ -1374,47 +1293,79 @@ ${question}
           },
 
           body: JSON.stringify({
-            systemInstruction,
-            contents,
+            systemInstruction: {
+              parts: [
+                {
+                  text: `
+The Hira Academy website search did not find a reliable
+Hira Academy page containing the requested information.
+
+Question:
+${question}
+
+Do NOT invent a Hira Academy source.
+
+Do NOT give a random Hira Academy URL.
+
+Answer exactly:
+
+"I couldn't find this information in the current Hira
+Academy material."
+
+You may add one short sentence asking the student to provide
+the chapter or exercise if appropriate.
+`
+                }
+              ]
+            },
+
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: question
+                  }
+                ]
+              }
+            ],
 
             generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 600
+              temperature: 0,
+              maxOutputTokens: 200
             }
           })
         }
       );
 
-    const data =
-      await response.json();
+    if (response.ok) {
+      const data =
+        await response.json();
 
-    if (!response.ok) {
-      return res.status(200).json({
-        reply:
-          "I couldn't find this information in the current Hira Academy material, and the AI service is temporarily unavailable.",
-        websiteFirst: true
-      });
+      const reply =
+        data?.candidates?.[0]
+          ?.content?.parts
+          ?.map(
+            p => p.text || ""
+          )
+          .join("")
+          .trim();
+
+      if (reply) {
+        return res.status(200).json({
+          reply
+        });
+      }
     }
-
-    const reply =
-      data?.candidates?.[0]
-        ?.content?.parts
-        ?.map(
-          p => p.text || ""
-        )
-        .join("")
-        .trim();
-
-    return res.status(200).json({
-      reply:
-        reply ||
-        "I couldn't find this information in the current Hira Academy material."
-    });
-
-  } catch {
-    return res.status(200).json({
-      reply:
-        "I couldn't find this information in the current Hira Academy material, and the AI service is temporarily unavailable."
-    });
+  } catch (error) {
+    console.error(
+      "No-source Gemini error:",
+      error
+    );
   }
+
+  return res.status(200).json({
+    reply:
+      "I couldn't find this information in the current Hira Academy material."
+  });
 }
