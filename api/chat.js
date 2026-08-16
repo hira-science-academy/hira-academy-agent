@@ -1,7 +1,7 @@
 export default async function handler(req, res) {
-  // ============================================================
+  // =========================================================
   // CORS
-  // ============================================================
+  // =========================================================
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader(
     "Access-Control-Allow-Methods",
@@ -23,9 +23,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ============================================================
-    // GEMINI API KEY
-    // ============================================================
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -34,9 +31,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // ============================================================
-    // READ REQUEST BODY
-    // ============================================================
+    // =========================================================
+    // BODY
+    // =========================================================
     let body = req.body;
 
     if (typeof body === "string") {
@@ -57,17 +54,15 @@ export default async function handler(req, res) {
       });
     }
 
-    const latestUserMessage = [...messages]
-      .reverse()
-      .find(
-        m =>
-          m &&
-          m.role === "user" &&
-          typeof m.content === "string"
-      );
+    const userMessages = messages.filter(
+      m => m?.role === "user" && typeof m?.content === "string"
+    );
+
+    const latestMessage =
+      userMessages[userMessages.length - 1];
 
     const question =
-      latestUserMessage?.content?.trim();
+      latestMessage?.content?.trim();
 
     if (!question) {
       return res.status(400).json({
@@ -77,9 +72,9 @@ export default async function handler(req, res) {
 
     const SITE = "https://hiraacademy.com.pk";
 
-    // ============================================================
-    // NORMALIZE TEXT
-    // ============================================================
+    // =========================================================
+    // NORMALIZE
+    // =========================================================
     function normalize(text) {
       return String(text || "")
         .toLowerCase()
@@ -93,37 +88,60 @@ export default async function handler(req, res) {
         .trim();
     }
 
-    const normalizedQuestion =
-      normalize(question);
+    const q = normalize(question);
 
-    // ============================================================
-    // COMPLETE CONVERSATION
-    // ============================================================
-    const conversationText = messages
-      .map(m => m?.content || "")
-      .join(" ");
+    // =========================================================
+    // FOLLOW-UP DETECTION
+    //
+    // Previous conversation is used ONLY for short follow-ups.
+    // A completely new question gets a completely new search.
+    // =========================================================
+    function isFollowUp(text) {
+      const x = normalize(text);
 
-    const normalizedConversation =
-      normalize(conversationText);
+      return (
+        /^(why|how|explain|explain it|what does this mean|what about this|tell me more|more|continue|solve it|solve this|answer this|give answer|define it|its meaning|meaning)\s*[?.!]*$/i.test(x)
+      );
+    }
 
-    // ============================================================
+    const followUp = isFollowUp(question);
+
+    // =========================================================
+    // CONTEXT
+    // =========================================================
+    let contextText = "";
+
+    if (followUp) {
+      contextText = messages
+        .slice(-6)
+        .map(m => m?.content || "")
+        .join(" ");
+    } else {
+      // IMPORTANT:
+      // Do NOT use old exercise/topic context for a new question.
+      contextText = question;
+    }
+
+    const searchText = normalize(contextText);
+
+    // =========================================================
     // DETECT CLASS
-    // ============================================================
+    // =========================================================
     function detectClass(text) {
-      const q = normalize(text);
+      const x = normalize(text);
 
       if (
-        /\bclass\s*10\b/.test(q) ||
-        /\b10th\b/.test(q) ||
-        /\bgrade\s*10\b/.test(q)
+        /\bclass\s*10\b/.test(x) ||
+        /\b10th\b/.test(x) ||
+        /\bgrade\s*10\b/.test(x)
       ) {
         return 10;
       }
 
       if (
-        /\bclass\s*9\b/.test(q) ||
-        /\b9th\b/.test(q) ||
-        /\bgrade\s*9\b/.test(q)
+        /\bclass\s*9\b/.test(x) ||
+        /\b9th\b/.test(x) ||
+        /\bgrade\s*9\b/.test(x)
       ) {
         return 9;
       }
@@ -131,53 +149,55 @@ export default async function handler(req, res) {
       return null;
     }
 
-    // ============================================================
-    // DETECT SUBJECT
-    // ============================================================
+    // =========================================================
+    // SUBJECT DETECTION
+    // =========================================================
     function detectSubject(text) {
-      const q = normalize(text);
+      const x = normalize(text);
 
+      // Mathematics
       if (
-        /\bmath\b/.test(q) ||
-        /\bmaths\b/.test(q) ||
-        /\bmathematics\b/.test(q) ||
-        /\balgebra\b/.test(q) ||
-        /\bquadratic\b/.test(q) ||
-        /\bmatrix\b/.test(q) ||
-        /\bmatrices\b/.test(q) ||
-        /\bdeterminant\b/.test(q) ||
-        /\bvector\b/.test(q) ||
-        /\bvectors\b/.test(q) ||
-        /\btrigonometry\b/.test(q) ||
-        /\bprobability\b/.test(q) ||
-        /\bgeometry\b/.test(q) ||
-        /\bcircle\b/.test(q) ||
-        /\btangent\b/.test(q)
+        /\bmath\b/.test(x) ||
+        /\bmaths\b/.test(x) ||
+        /\bmathematics\b/.test(x) ||
+        /\balgebra\b/.test(x) ||
+        /\bquadratic\b/.test(x) ||
+        /\bmatrix\b/.test(x) ||
+        /\bmatrices\b/.test(x) ||
+        /\bdeterminant\b/.test(x) ||
+        /\bvector\b/.test(x) ||
+        /\bvectors\b/.test(x) ||
+        /\btrigonometry\b/.test(x) ||
+        /\bprobability\b/.test(x) ||
+        /\bgeometry\b/.test(x)
       ) {
-        return "mathematics";
+        return "math";
       }
 
+      // Physics
       if (
-        /\bphysics\b/.test(q) ||
-        /\belectromagnetism\b/.test(q) ||
-        /\bmagnetic\b/.test(q) ||
-        /\bmagnetic field\b/.test(q) ||
-        /\bcurrent\b/.test(q) ||
-        /\bvoltage\b/.test(q) ||
-        /\bresistance\b/.test(q) ||
-        /\bsolenoid\b/.test(q) ||
-        /\bmotor\b/.test(q) ||
-        /\bgenerator\b/.test(q) ||
-        /\btransformer\b/.test(q) ||
-        /\bdiode\b/.test(q) ||
-        /\bsemiconductor\b/.test(q) ||
-        /\bradiation\b/.test(q) ||
-        /\bnuclear\b/.test(q) ||
-        /\bwave\b/.test(q) ||
-        /\bsound\b/.test(q) ||
-        /\blight\b/.test(q) ||
-        /\bheat\b/.test(q) ||
-        /\btemperature\b/.test(q)
+        /\bphysics\b/.test(x) ||
+        /\belectromagnetism\b/.test(x) ||
+        /\belectromagnetic\b/.test(x) ||
+        /\bmagnetic\b/.test(x) ||
+        /\bmagnetic field\b/.test(x) ||
+        /\bcurrent\b/.test(x) ||
+        /\bvoltage\b/.test(x) ||
+        /\bresistance\b/.test(x) ||
+        /\bsolenoid\b/.test(x) ||
+        /\bmotor\b/.test(x) ||
+        /\bgenerator\b/.test(x) ||
+        /\btransformer\b/.test(x) ||
+        /\bdiode\b/.test(x) ||
+        /\bsemiconductor\b/.test(x) ||
+        /\bradiation\b/.test(x) ||
+        /\bnuclear\b/.test(x) ||
+        /\bcoriolis\b/.test(x) ||
+        /\bforce\b/.test(x) ||
+        /\bfield\b/.test(x) ||
+        /\bfaraday\b/.test(x) ||
+        /\blenz\b/.test(x) ||
+        /\bfleming\b/.test(x)
       ) {
         return "physics";
       }
@@ -185,114 +205,63 @@ export default async function handler(req, res) {
       return null;
     }
 
-    // ============================================================
-    // DETECT EXERCISE
-    // ============================================================
+    // =========================================================
+    // EXERCISE
+    // =========================================================
     function detectExercise(text) {
-      const q = normalize(text);
+      const x = normalize(text);
 
-      let match = q.match(
-        /\bexercise\s+(\d{1,2})\.(\d{1,2})\b/
-      );
+      const match =
+        x.match(
+          /\bexercise\s+(\d{1,2})\.(\d{1,2})\b/
+        );
 
-      if (match) {
-        return {
-          unit: Number(match[1]),
-          exercise: Number(match[2])
-        };
+      if (!match) {
+        return null;
       }
 
-      match = q.match(
-        /\b(?:ex|exercise)\s*(\d{1,2})\.(\d{1,2})\b/
-      );
-
-      if (match) {
-        return {
-          unit: Number(match[1]),
-          exercise: Number(match[2])
-        };
-      }
-
-      return null;
+      return {
+        unit: Number(match[1]),
+        exercise: Number(match[2])
+      };
     }
 
-    // ============================================================
-    // DETECT CHAPTER
-    // ============================================================
+    // =========================================================
+    // CHAPTER
+    // =========================================================
     function detectChapter(text) {
-      const q = normalize(text);
+      const x = normalize(text);
 
-      const match = q.match(
-        /\bchapter\s+(\d{1,2})\b/
-      );
+      const match =
+        x.match(
+          /\bchapter\s+(\d{1,2})\b/
+        );
 
-      if (match) {
-        return Number(match[1]);
-      }
-
-      return null;
+      return match
+        ? Number(match[1])
+        : null;
     }
 
-    // ============================================================
-    // DETECT CONTEXT
-    // ============================================================
-    let grade =
-      detectClass(normalizedQuestion);
+    const grade =
+      detectClass(searchText);
 
-    if (!grade) {
-      grade =
-        detectClass(normalizedConversation);
-    }
+    const subject =
+      detectSubject(searchText);
 
-    let subject =
-      detectSubject(normalizedQuestion);
+    const exercise =
+      detectExercise(searchText);
 
-    if (!subject) {
-      subject =
-        detectSubject(normalizedConversation);
-    }
+    const chapter =
+      detectChapter(searchText);
 
-    let exercise =
-      detectExercise(normalizedQuestion);
-
-    if (!exercise) {
-      exercise =
-        detectExercise(normalizedConversation);
-    }
-
-    let chapter =
-      detectChapter(normalizedQuestion);
-
-    if (!chapter) {
-      chapter =
-        detectChapter(normalizedConversation);
-    }
-
-    // ============================================================
-    // EXERCISE WITHOUT SUBJECT
-    //
-    // Example:
-    // "exercise 6.2 class 10"
-    //
-    // If it does not explicitly say Math/Physics,
-    // use Mathematics for Class 9/10 exercises.
-    // ============================================================
-    if (exercise && !subject) {
-      subject = "mathematics";
-    }
-
-    if (exercise && !grade) {
-      grade = 10;
-    }
-
-    // ============================================================
-    // HUB URLS
-    // ============================================================
-    const HUBS = {
-      mathematics9:
+    // =========================================================
+    // HUBS
+    // =========================================================
+    const hubs = {
+      math9:
         `${SITE}/Mathematics-9th.html`,
 
-      mathematics10:
+      math10:
         `${SITE}/Mathematics-10th-New-2026.html`,
 
       physics9:
@@ -302,63 +271,60 @@ export default async function handler(req, res) {
         `${SITE}/Physics-10th-New-2026.html`
     };
 
-    // ============================================================
-    // SELECT HUBS
-    // ============================================================
-    let selectedHubs = [];
+    let hubUrls = [];
 
-    if (subject === "mathematics" && grade === 10) {
-      selectedHubs = [HUBS.mathematics10];
+    if (subject === "math" && grade === 10) {
+      hubUrls = [hubs.math10];
     }
 
-    else if (subject === "mathematics" && grade === 9) {
-      selectedHubs = [HUBS.mathematics9];
+    else if (subject === "math" && grade === 9) {
+      hubUrls = [hubs.math9];
     }
 
     else if (subject === "physics" && grade === 10) {
-      selectedHubs = [HUBS.physics10];
+      hubUrls = [hubs.physics10];
     }
 
     else if (subject === "physics" && grade === 9) {
-      selectedHubs = [HUBS.physics9];
+      hubUrls = [hubs.physics9];
     }
 
-    else if (subject === "mathematics") {
-      selectedHubs = [
-        HUBS.mathematics10,
-        HUBS.mathematics9
+    else if (subject === "math") {
+      hubUrls = [
+        hubs.math10,
+        hubs.math9
       ];
     }
 
     else if (subject === "physics") {
-      selectedHubs = [
-        HUBS.physics10,
-        HUBS.physics9
+      hubUrls = [
+        hubs.physics10,
+        hubs.physics9
       ];
     }
 
     else {
-      // Unknown subject:
-      // Search all four main academic hubs.
-      selectedHubs = [
-        HUBS.mathematics10,
-        HUBS.mathematics9,
-        HUBS.physics10,
-        HUBS.physics9
+      // No subject detected:
+      // search ALL major academic hubs.
+      hubUrls = [
+        hubs.math10,
+        hubs.math9,
+        hubs.physics10,
+        hubs.physics9
       ];
     }
 
-    // ============================================================
-    // FETCH WITH TIMEOUT
-    // ============================================================
-    async function fetchPage(url, timeout = 6000) {
+    // =========================================================
+    // FETCH PAGE
+    // =========================================================
+    async function fetchPage(url) {
       const controller =
         new AbortController();
 
-      const timer =
+      const timeout =
         setTimeout(
           () => controller.abort(),
-          timeout
+          7000
         );
 
       try {
@@ -377,17 +343,14 @@ export default async function handler(req, res) {
           return null;
         }
 
-        const html =
-          await response.text();
-
         return {
           url,
-          html
+          html: await response.text()
         };
 
       } catch (error) {
         console.error(
-          "Fetch error:",
+          "Fetch failed:",
           url,
           error.message
         );
@@ -395,17 +358,15 @@ export default async function handler(req, res) {
         return null;
 
       } finally {
-        clearTimeout(timer);
+        clearTimeout(timeout);
       }
     }
 
-    // ============================================================
-    // HTML TO TEXT
-    // ============================================================
+    // =========================================================
+    // HTML TEXT
+    // =========================================================
     function htmlToText(html) {
-      if (!html) return "";
-
-      return html
+      return String(html || "")
         .replace(
           /<script\b[^>]*>[\s\S]*?<\/script>/gi,
           " "
@@ -447,27 +408,15 @@ export default async function handler(req, res) {
           "'"
         )
         .replace(
-          /&lt;/gi,
-          "<"
-        )
-        .replace(
-          /&gt;/gi,
-          ">"
-        )
-        .replace(
-          /[ \t]+/g,
+          /\s+/g,
           " "
-        )
-        .replace(
-          /\n\s*\n+/g,
-          "\n"
         )
         .trim();
     }
 
-    // ============================================================
-    // PAGE TITLE
-    // ============================================================
+    // =========================================================
+    // TITLE
+    // =========================================================
     function getTitle(html) {
       const match =
         html.match(
@@ -479,9 +428,9 @@ export default async function handler(req, res) {
         : "";
     }
 
-    // ============================================================
-    // EXTRACT INTERNAL LINKS
-    // ============================================================
+    // =========================================================
+    // LINKS
+    // =========================================================
     function extractLinks(html) {
       const links = [];
 
@@ -491,24 +440,12 @@ export default async function handler(req, res) {
       let match;
 
       while (
-        (match = regex.exec(html)) !== null
+        (match = regex.exec(html))
       ) {
         try {
-          const href =
-            match[1].trim();
-
-          if (
-            !href ||
-            href.startsWith("#") ||
-            href.startsWith("mailto:") ||
-            href.startsWith("tel:")
-          ) {
-            continue;
-          }
-
           const url =
             new URL(
-              href,
+              match[1],
               SITE
             );
 
@@ -519,7 +456,6 @@ export default async function handler(req, res) {
             continue;
           }
 
-          // Skip obvious non-HTML files.
           const pathname =
             url.pathname.toLowerCase();
 
@@ -533,166 +469,103 @@ export default async function handler(req, res) {
 
           links.push({
             url: url.href.split("#")[0],
-            text: htmlToText(
-              match[2]
-            )
+            text: htmlToText(match[2])
           });
 
         } catch {
-          // Ignore invalid URLs.
+          // ignore
         }
       }
 
       return [
         ...new Map(
           links.map(
-            item => [
-              item.url,
-              item
-            ]
+            x => [x.url, x]
           )
         ).values()
       ];
     }
 
-    // ============================================================
-    // FETCH ALL HUBS
-    // ============================================================
-    const hubResults =
-      await Promise.all(
-        selectedHubs.map(
-          url =>
-            fetchPage(
-              url
-            )
+    // =========================================================
+    // FETCH HUBS
+    // =========================================================
+    const hubPages =
+      (
+        await Promise.all(
+          hubUrls.map(fetchPage)
         )
-      );
+      ).filter(Boolean);
 
-    const validHubs =
-      hubResults.filter(
-        Boolean
-      );
-
-    // ============================================================
-    // DISCOVER LINKS FROM HUBS
-    // ============================================================
-    let discoveredLinks = [];
+    // =========================================================
+    // COLLECT LINKS
+    // =========================================================
+    let links = [];
 
     for (
-      const hub of validHubs
+      const page of hubPages
     ) {
-      discoveredLinks.push(
+      links.push(
         ...extractLinks(
-          hub.html
+          page.html
         )
       );
     }
 
-    discoveredLinks = [
+    links = [
       ...new Map(
-        discoveredLinks.map(
-          item => [
-            item.url,
-            item
-          ]
+        links.map(
+          x => [x.url, x]
         )
       ).values()
     ];
 
-    // ============================================================
-    // EXACT EXERCISE SEARCH
-    //
-    // This is the important part for:
-    //
-    // exercise 6.2 math 10
-    //
-    // It finds the actual link on your Math hub.
-    // ============================================================
-    let exactExerciseLinks = [];
-
-    if (exercise) {
-      const target =
-        `exercise ${exercise.unit}.${exercise.exercise}`;
-
-      exactExerciseLinks =
-        discoveredLinks.filter(
-          link => {
-            const text =
-              normalize(
-                link.text
-              );
-
-            const url =
-              normalize(
-                link.url
-              );
-
-            return (
-              text.includes(
-                target
-              ) ||
-              text.includes(
-                `exercise ${exercise.unit} ${exercise.exercise}`
-              ) ||
-              (
-                url.includes(
-                  `exercise`
-                ) &&
-                url.includes(
-                  `${exercise.unit}`
-                ) &&
-                url.includes(
-                  `${exercise.exercise}`
-                )
-              )
-            );
-          }
-        );
-    }
-
-    // ============================================================
-    // PRIORITY URLS
-    // ============================================================
-    let priorityUrls = [];
-
-    // Exact exercise pages first.
-    for (
-      const link
-      of exactExerciseLinks
-    ) {
-      priorityUrls.push(
-        link.url
-      );
-    }
-
-    // Then chapter/resource links.
-    for (
-      const link
-      of discoveredLinks
-    ) {
-      if (
-        priorityUrls.length >= 20
-      ) {
-        break;
-      }
-
+    // =========================================================
+    // SCORE LINKS
+    // =========================================================
+    function scoreLink(link) {
       const text =
-        normalize(
-          link.text
-        );
+        normalize(link.text);
 
       const url =
-        normalize(
-          link.url
-        );
+        normalize(link.url);
 
-      let useful = false;
+      let score = 0;
 
+      // Exact exercise
+      if (exercise) {
+        const target =
+          `exercise ${exercise.unit}.${exercise.exercise}`;
+
+        if (
+          text.includes(target)
+        ) {
+          score += 1000;
+        }
+
+        if (
+          url.includes("exercise") &&
+          url.includes(
+            String(exercise.unit)
+          ) &&
+          url.includes(
+            String(exercise.exercise)
+          )
+        ) {
+          score += 900;
+        }
+      }
+
+      // Chapter
       if (chapter) {
         if (
           text.includes(
             `chapter ${chapter}`
-          ) ||
+          )
+        ) {
+          score += 300;
+        }
+
+        if (
           url.includes(
             `chapter${chapter}`
           ) ||
@@ -700,120 +573,85 @@ export default async function handler(req, res) {
             `chapter-${chapter}`
           )
         ) {
-          useful = true;
+          score += 300;
         }
       }
 
-      // Useful academic pages.
+      // Question words
+      const words =
+        q.split(/\s+/)
+          .filter(
+            word =>
+              word.length >= 4
+          );
+
+      for (
+        const word of words
+      ) {
+        if (
+          text.includes(word)
+        ) {
+          score += 25;
+        }
+
+        if (
+          url.includes(word)
+        ) {
+          score += 15;
+        }
+      }
+
+      // Resource relevance
       if (
-        /short|exercise|question|crq|long|numerical|mcq|definition|formula|chapter|solution|notes/.test(
+        /short|question|exercise|crq|long|numerical|mcq|definition|formula|chapter|solution|notes/.test(
           text
         )
       ) {
-        useful = true;
+        score += 40;
       }
 
-      if (
-        useful &&
-        !priorityUrls.includes(
-          link.url
-        )
-      ) {
-        priorityUrls.push(
-          link.url
-        );
-      }
+      return score;
     }
 
-    // Add general discovered pages.
-    for (
-      const link
-      of discoveredLinks
-    ) {
-      if (
-        priorityUrls.length >= 60
-      ) {
-        break;
-      }
-
-      if (
-        !priorityUrls.includes(
-          link.url
-        )
-      ) {
-        priorityUrls.push(
-          link.url
-        );
-      }
-    }
-
-    // ============================================================
-    // FETCH DISCOVERED PAGES
-    //
-    // We limit concurrency to avoid overloading your website.
-    // ============================================================
-    async function fetchInBatches(
-      urls,
-      batchSize = 8
-    ) {
-      const results = [];
-
-      for (
-        let i = 0;
-        i < urls.length;
-        i += batchSize
-      ) {
-        const batch =
-          urls.slice(
-            i,
-            i + batchSize
-          );
-
-        const batchResults =
-          await Promise.all(
-            batch.map(
-              url =>
-                fetchPage(
-                  url,
-                  5000
-                )
-            )
-          );
-
-        results.push(
-          ...batchResults.filter(
-            Boolean
-          )
-        );
-
-        // Stop after enough pages have been collected.
-        if (
-          results.length >= 50
-        ) {
-          break;
-        }
-      }
-
-      return results;
-    }
-
-    const discoveredPages =
-      await fetchInBatches(
-        priorityUrls,
-        8
+    links = links
+      .map(link => ({
+        ...link,
+        score: scoreLink(link)
+      }))
+      .sort(
+        (a, b) =>
+          b.score - a.score
       );
 
-    // ============================================================
-    // COMBINE HUBS + DISCOVERED PAGES
-    // ============================================================
-    const allPages = [
-      ...validHubs,
-      ...discoveredPages
+    // =========================================================
+    // FETCH TOP RESOURCE PAGES
+    // =========================================================
+    const topLinks =
+      links.slice(0, 25);
+
+    const resourcePages =
+      (
+        await Promise.all(
+          topLinks.map(
+            link =>
+              fetchPage(
+                link.url
+              )
+          )
+        )
+      ).filter(Boolean);
+
+    // =========================================================
+    // COMBINE HUB + RESOURCE PAGES
+    // =========================================================
+    const pages = [
+      ...hubPages,
+      ...resourcePages
     ];
 
     const uniquePages = [
       ...new Map(
-        allPages.map(
+        pages.map(
           page => [
             page.url,
             page
@@ -822,9 +660,9 @@ export default async function handler(req, res) {
       ).values()
     ];
 
-    // ============================================================
-    // SCORE PAGE
-    // ============================================================
+    // =========================================================
+    // SCORE ACTUAL PAGES
+    // =========================================================
     function scorePage(page) {
       const title =
         normalize(
@@ -847,113 +685,88 @@ export default async function handler(req, res) {
 
       let score = 0;
 
-      // ----------------------------------------------------------
       // Exact exercise
-      // ----------------------------------------------------------
       if (exercise) {
         const target =
           `exercise ${exercise.unit}.${exercise.exercise}`;
 
         if (
-          title.includes(
-            target
-          )
+          title.includes(target)
         ) {
-          score += 1000;
+          score += 1500;
         }
 
         if (
-          text.includes(
-            target
-          )
+          text.includes(target)
         ) {
-          score += 400;
+          score += 500;
         }
 
         if (
+          url.includes("exercise") &&
           url.includes(
-            `exercise`
+            String(exercise.unit)
           ) &&
           url.includes(
-            `${exercise.unit}`
-          ) &&
-          url.includes(
-            `${exercise.exercise}`
+            String(exercise.exercise)
           )
         ) {
-          score += 1000;
+          score += 1500;
         }
       }
 
-      // ----------------------------------------------------------
-      // Exact question words
-      // ----------------------------------------------------------
-      const questionWords =
-        normalizedQuestion
-          .split(/\s+/)
+      // Exact topic/question words
+      const words =
+        q.split(/\s+/)
           .filter(
             word =>
               word.length >= 4
-          )
-          .slice(0, 12);
+          );
 
       for (
-        const word
-        of questionWords
+        const word of words
       ) {
         if (
-          title.includes(
-            word
-          )
+          title.includes(word)
         ) {
-          score += 20;
+          score += 40;
         }
 
         if (
-          text.includes(
-            word
-          )
+          text.includes(word)
         ) {
-          score += 5;
+          score += 10;
         }
       }
 
-      // ----------------------------------------------------------
       // Subject
-      // ----------------------------------------------------------
-      if (
-        subject === "mathematics"
-      ) {
+      if (subject === "physics") {
+        if (
+          title.includes("physics") ||
+          url.includes("physics")
+        ) {
+          score += 250;
+        }
+      }
+
+      if (subject === "math") {
         if (
           title.includes("math") ||
           title.includes("mathematics") ||
           url.includes("math")
         ) {
-          score += 150;
+          score += 250;
         }
       }
 
-      if (
-        subject === "physics"
-      ) {
-        if (
-          title.includes("physics") ||
-          url.includes("physics")
-        ) {
-          score += 150;
-        }
-      }
-
-      // ----------------------------------------------------------
-      // Class
-      // ----------------------------------------------------------
+      // Grade
       if (grade === 10) {
         if (
           title.includes("10th") ||
           title.includes("class 10") ||
           url.includes("10th")
         ) {
-          score += 100;
+          score += 150;
         }
       }
 
@@ -963,72 +776,46 @@ export default async function handler(req, res) {
           title.includes("class 9") ||
           url.includes("9th")
         ) {
-          score += 100;
+          score += 150;
         }
       }
 
-      // ----------------------------------------------------------
       // Chapter
-      // ----------------------------------------------------------
       if (chapter) {
         if (
           title.includes(
             `chapter ${chapter}`
           )
         ) {
-          score += 250;
-        }
-
-        if (
-          url.includes(
-            `chapter${chapter}`
-          ) ||
-          url.includes(
-            `chapter-${chapter}`
-          )
-        ) {
-          score += 250;
+          score += 400;
         }
       }
 
       return {
+        ...page,
         score,
         title,
         text
       };
     }
 
-    // ============================================================
-    // RANK PAGES
-    // ============================================================
     const rankedPages =
       uniquePages
-        .map(page => {
-          const result =
-            scorePage(
-              page
-            );
-
-          return {
-            ...page,
-            ...result
-          };
-        })
+        .map(scorePage)
         .sort(
           (a, b) =>
-            b.score -
-            a.score
+            b.score - a.score
         );
 
-    // ============================================================
-    // REQUIRE A REAL MATCH
-    // ============================================================
     const bestPage =
       rankedPages[0];
 
+    // =========================================================
+    // NO MATCH
+    // =========================================================
     if (
       !bestPage ||
-      bestPage.score < 10
+      bestPage.score < 15
     ) {
       return res.status(200).json({
         reply:
@@ -1036,33 +823,30 @@ export default async function handler(req, res) {
       });
     }
 
-    // ============================================================
-    // BUILD RELEVANT SOURCE CONTENT
-    //
-    // Use the best pages, not random site content.
-    // ============================================================
+    // =========================================================
+    // SOURCE CONTEXT
+    // =========================================================
     const sourcePages =
       rankedPages
         .filter(
           page =>
             page.score >=
             Math.max(
-              10,
-              bestPage.score - 80
+              15,
+              bestPage.score - 100
             )
         )
-        .slice(0, 5);
+        .slice(0, 4);
 
     let sourceContext = "";
 
     for (
-      const page
-      of sourcePages
+      const page of sourcePages
     ) {
       sourceContext += `
-==================================================
-SOURCE PAGE
-==================================================
+==============================
+HIRA ACADEMY SOURCE
+==============================
 
 TITLE:
 ${page.title}
@@ -1073,43 +857,39 @@ ${page.url}
 CONTENT:
 ${page.text.substring(
         0,
-        18000
+        16000
       )}
 
-==================================================
+==============================
 `;
     }
 
-    // ============================================================
+    // =========================================================
     // GEMINI CONTENTS
-    // ============================================================
+    // =========================================================
     const contents =
       messages
-        .map(
-          m => ({
-            role:
-              m.role === "user"
-                ? "user"
-                : "model",
+        .map(m => ({
+          role:
+            m.role === "user"
+              ? "user"
+              : "model",
 
-            parts: [
-              {
-                text:
-                  m.content || ""
-              }
-            ]
-          })
-        )
+          parts: [
+            {
+              text:
+                m.content || ""
+            }
+          ]
+        }))
         .filter(
           m =>
-            m.parts[0].text
-              .trim()
-              .length > 0
+            m.parts[0].text.trim()
         );
 
-    // ============================================================
+    // =========================================================
     // SYSTEM INSTRUCTION
-    // ============================================================
+    // =========================================================
     const systemInstruction = {
       parts: [
         {
@@ -1119,109 +899,88 @@ You are the official Hira Academy Assistant.
 Website:
 ${SITE}
 
-Your job is to answer students using the CURRENT Hira
-Academy website material supplied below.
+IMPORTANT:
 
-==================================================
-IMPORTANT RULE
-==================================================
+Answer ONLY from the Hira Academy source material
+provided below.
 
-The Hira Academy source material is the authority.
+Do NOT use old pretrained knowledge to replace
+Hira Academy material.
 
-DO NOT answer from old knowledge.
+Do NOT invent answers.
 
-DO NOT use your pretrained knowledge to replace missing
-Hira Academy content.
+Do NOT make up textbook content.
 
-DO NOT invent information.
-
-DO NOT make up textbook answers.
-
-If the requested information is not contained in the
-supplied Hira Academy material, say:
+If the answer is not present in the supplied
+Hira Academy source, say:
 
 "I couldn't find this information in the current Hira Academy material."
 
-Do not then provide a general knowledge answer.
-
 ==================================================
-CONVERSATION CONTEXT
+NEW QUESTION RULE
 ==================================================
 
-Use the previous conversation.
+A new independent question MUST be treated as a new
+search topic.
 
-For example:
+Do NOT carry the previous exercise, chapter or subject
+into a new independent question.
 
-Student:
-"exercise 6.2 class 10"
+Example:
 
-Student:
-"why?"
+User:
+exercise 6.2 math 10
 
-The second question refers to Exercise 6.2.
+Then:
 
-Likewise:
+User:
+What is the right hand grip rule?
 
-Student:
-"What is the right hand grip rule?"
+The second question is a NEW question.
 
-Student:
-"explain it"
+It must NOT use Exercise 6.2.
 
-The second question refers to the Right-Hand Grip Rule.
+It should use Hira Academy Physics material.
 
-Never lose the context unnecessarily.
+==================================================
+FOLLOW-UP RULE
+==================================================
+
+Only maintain the previous topic when the user clearly
+asks a follow-up such as:
+
+why?
+explain it
+explain this
+what does this mean?
+solve it
+give more detail
+what about this?
 
 ==================================================
 ANSWER STYLE
 ==================================================
 
-Use the wording and terminology of Hira Academy as
-closely as possible.
+Use Hira Academy terminology and wording as closely as
+possible.
 
-For a definition:
-Give the relevant Hira Academy definition.
+For definitions, give the definition from Hira Academy.
 
-For a short question:
-Give the Hira Academy answer directly.
+For short questions, answer directly.
 
-For an exercise:
-Use the actual Hira Academy exercise/solution page.
+For exercises, use the actual Hira Academy exercise page.
 
-For a numerical:
-Use the Hira Academy method, formulas, working and answer
-when present.
+For numerical problems, use the Hira Academy method and
+answer when available.
 
-For a follow-up:
-Continue from the previous question using the same source.
-
-Do not add unrelated information.
+Do not add unrelated general knowledge.
 
 Do not cite another website.
 
-Do not mention that you are using a web crawler.
-
 ==================================================
-CURRENT CONTEXT
+CURRENT QUESTION
 ==================================================
 
-Class:
-${grade || "Not specified"}
-
-Subject:
-${subject || "Not specified"}
-
-Chapter:
-${chapter || "Not specified"}
-
-Exercise:
-${
-  exercise
-    ? `${exercise.unit}.${exercise.exercise}`
-    : "Not specified"
-}
-
-Student's latest question:
 ${question}
 
 ==================================================
@@ -1229,25 +988,15 @@ SOURCE MATERIAL
 ==================================================
 
 ${sourceContext}
-
-==================================================
-FINAL SOURCE RULE
-==================================================
-
-The answer must be supported by the source material above.
-
-Do not create a source URL yourself.
-
-The backend will add the actual source link.
 `
         }
       ]
     };
 
-    // ============================================================
-    // GEMINI API
-    // ============================================================
-    const response =
+    // =========================================================
+    // GEMINI
+    // =========================================================
+    const geminiResponse =
       await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
         {
@@ -1265,7 +1014,6 @@ The backend will add the actual source link.
             contents,
 
             generationConfig: {
-              temperature: 0,
               maxOutputTokens: 1200
             }
           })
@@ -1273,16 +1021,16 @@ The backend will add the actual source link.
       );
 
     const data =
-      await response.json();
+      await geminiResponse.json();
 
-    if (!response.ok) {
+    if (!geminiResponse.ok) {
       console.error(
         "Gemini API Error:",
         data
       );
 
       return res.status(
-        response.status
+        geminiResponse.status
       ).json({
         error:
           data.error?.message ||
@@ -1290,14 +1038,9 @@ The backend will add the actual source link.
       });
     }
 
-    // ============================================================
-    // GET GEMINI ANSWER
-    // ============================================================
     let reply =
-      data
-        ?.candidates?.[0]
-        ?.content
-        ?.parts
+      data?.candidates?.[0]
+        ?.content?.parts
         ?.map(
           p => p.text || ""
         )
@@ -1305,24 +1048,16 @@ The backend will add the actual source link.
         .trim();
 
     if (!reply) {
-      return res.status(200).json({
-        reply:
-          "I couldn't find this information in the current Hira Academy material."
-      });
+      reply =
+        "I couldn't find this information in the current Hira Academy material.";
     }
 
-    // ============================================================
-    // ADD REAL SOURCE LINK
-    //
-    // This is NOT generated by Gemini.
-    // It comes directly from the page we actually fetched.
-    // ============================================================
+    // =========================================================
+    // SOURCE LINK
+    // =========================================================
     reply +=
       `\n\n---\n**Source: Hira Academy**  \n[Open the original Hira Academy page](${bestPage.url})`;
 
-    // ============================================================
-    // RETURN
-    // ============================================================
     return res.status(200).json({
       reply,
       sourceUrl: bestPage.url,
@@ -1331,7 +1066,7 @@ The backend will add the actual source link.
 
   } catch (error) {
     console.error(
-      "Hira Academy chatbot error:",
+      "Hira Academy Assistant Error:",
       error
     );
 
