@@ -1,26 +1,50 @@
 export default async function handler(req, res) {
   // =========================================================
-  // CORS
+  // HIRA ACADEMY AI ASSISTANT
   // =========================================================
+
+  const SITE = "https://hiraacademy.com.pk";
+
+  // ---------------------------------------------------------
+  // CORS
+  // ---------------------------------------------------------
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "POST, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Accept"
+  );
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({
+      error: "Method not allowed"
+    });
   }
-
-  const SITE = "https://hiraacademy.com.pk";
-  const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
   try {
     // =======================================================
-    // READ REQUEST
+    // API KEY
     // =======================================================
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        error: "GEMINI_API_KEY is missing on Vercel."
+      });
+    }
+
+    // =======================================================
+    // READ BODY
+    // =======================================================
+
     let body = req.body;
 
     if (typeof body === "string") {
@@ -43,7 +67,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const userMessage = [...messages]
+    const latestUserMessage = [...messages]
       .reverse()
       .find(
         m =>
@@ -52,7 +76,8 @@ export default async function handler(req, res) {
           typeof m.content === "string"
       );
 
-    const question = userMessage?.content?.trim();
+    const question =
+      latestUserMessage?.content?.trim();
 
     if (!question) {
       return res.status(400).json({
@@ -60,11 +85,12 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log("HIRA QUESTION:", question);
+    console.log("HIRA USER QUESTION:", question);
 
     // =======================================================
     // HELPERS
     // =======================================================
+
     function normalize(text) {
       return String(text || "")
         .toLowerCase()
@@ -72,20 +98,13 @@ export default async function handler(req, res) {
         .replace(/&amp;/gi, "&")
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
-        .replace(/&#x27;/gi, "'")
-        .replace(/<[^>]*>/g, " ")
-        .replace(/[^\p{L}\p{N}\s.'-]/gu, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/[^\p{L}\p{N}\s.-]/gu, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
-    function slug(text) {
-      return normalize(text)
-        .replace(/['’]/g, "")
-        .replace(/\s+/g, "-");
-    }
-
-    function cleanHTML(html) {
+    function htmlToText(html) {
       return String(html || "")
         .replace(
           /<script\b[^>]*>[\s\S]*?<\/script>/gi,
@@ -98,13 +117,9 @@ export default async function handler(req, res) {
         .replace(
           /<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi,
           " "
-        );
-    }
-
-    function htmlToText(html) {
-      return cleanHTML(html)
+        )
         .replace(
-          /<\/(p|div|section|article|li|h1|h2|h3|h4|h5|h6|tr|td|th)>/gi,
+          /<\/(p|div|section|article|li|h1|h2|h3|h4|h5|h6|tr)>/gi,
           "\n"
         )
         .replace(/<br\s*\/?>/gi, "\n")
@@ -113,22 +128,14 @@ export default async function handler(req, res) {
         .replace(/&amp;/gi, "&")
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
-        .replace(/&#x27;/gi, "'")
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n")
         .trim();
     }
 
-    function getTitle(html) {
-      const m = String(html || "").match(
-        /<title[^>]*>([\s\S]*?)<\/title>/i
-      );
-
-      return m ? htmlToText(m[1]) : "";
-    }
-
-    async function fetchPage(url, timeout = 8000) {
-      const controller = new AbortController();
+    async function fetchText(url, timeout = 10000) {
+      const controller =
+        new AbortController();
 
       const timer = setTimeout(
         () => controller.abort(),
@@ -140,23 +147,25 @@ export default async function handler(req, res) {
           signal: controller.signal,
           headers: {
             "User-Agent":
-              "Hira-Academy-Assistant/Final",
+              "Mozilla/5.0 Hira-Academy-AI-Assistant",
             Accept:
-              "text/html,application/xhtml+xml"
+              "text/html,application/xhtml+xml,text/plain"
           }
         });
 
         if (!response.ok) {
+          console.log(
+            "FETCH STATUS:",
+            response.status,
+            url
+          );
           return null;
         }
 
-        return {
-          url,
-          html: await response.text()
-        };
+        return await response.text();
       } catch (error) {
         console.log(
-          "FETCH FAILED:",
+          "FETCH ERROR:",
           url,
           error.message
         );
@@ -167,41 +176,39 @@ export default async function handler(req, res) {
     }
 
     // =======================================================
-    // GET SITEMAP URLS
+    // GET SITEMAP
     // =======================================================
-    async function getSitemapURLs() {
-      const sitemap =
-        await fetchPage(
-          `${SITE}/sitemap.xml`,
-          8000
-        );
 
-      if (!sitemap) {
-        return [];
-      }
+    async function getSitemapUrls() {
+      const xml = await fetchText(
+        `${SITE}/sitemap.xml`
+      );
+
+      if (!xml) return [];
 
       const urls = [];
 
       const matches =
-        sitemap.html.match(
+        xml.match(
           /<loc>\s*([^<]+?)\s*<\/loc>/gi
         ) || [];
 
       for (const item of matches) {
-        const m = item.match(
-          /<loc>\s*([^<]+?)\s*<\/loc>/i
-        );
+        const match =
+          item.match(
+            /<loc>\s*([^<]+?)\s*<\/loc>/i
+          );
 
-        if (!m) continue;
+        if (!match) continue;
 
-        const url = m[1].trim();
+        const url = match[1].trim();
 
         if (!url.startsWith(SITE)) {
           continue;
         }
 
         if (
-          /\.(jpg|jpeg|png|gif|webp|svg|pdf|css|js|zip)$/i.test(
+          /\.(jpg|jpeg|png|gif|webp|svg|css|js|zip)$/i.test(
             url
           )
         ) {
@@ -214,241 +221,228 @@ export default async function handler(req, res) {
       return [...new Set(urls)];
     }
 
-    const sitemapURLs =
-      await getSitemapURLs();
+    const sitemapUrls =
+      await getSitemapUrls();
 
     console.log(
-      "SITEMAP URLS:",
-      sitemapURLs.length
+      "SITEMAP COUNT:",
+      sitemapUrls.length
     );
 
     // =======================================================
-    // DETECT EXERCISE
+    // QUESTION ANALYSIS
     // =======================================================
-    const exerciseMatch =
-      normalize(question).match(
-        /\b(?:exercise|ex)\s*(\d+)\.(\d+)\b/i
+
+    const q = normalize(question);
+
+    const isMath =
+      /\b(math|maths|mathematics|vector|vectors|algebra|trigonometry)\b/
+        .test(q);
+
+    const isPhysics =
+      /\b(physics|magnetism|magnetic|electromagnetism|electromagnetic|motor|generator|transformer|diode|semiconductor|faraday|lenz|fleming|coriolis)\b/
+        .test(q);
+
+    const isExercise =
+      /\b(exercise|ex)\s*\d+\s*[.]\s*\d+\b/i.test(
+        q
       );
 
-    const exercise =
+    const exerciseMatch =
+      q.match(
+        /\b(?:exercise|ex)\s*(\d+)\s*[.]\s*(\d+)\b/i
+      );
+
+    const exerciseUnit =
       exerciseMatch
-        ? {
-            unit: exerciseMatch[1],
-            number: exerciseMatch[2]
-          }
+        ? exerciseMatch[1]
         : null;
 
-    // =======================================================
-    // DETECT CHAPTER
-    // =======================================================
+    const exerciseNumber =
+      exerciseMatch
+        ? exerciseMatch[2]
+        : null;
+
     const chapterMatch =
-      normalize(question).match(
+      q.match(
         /\bchapter\s*(\d+)\b/i
       );
 
-    const chapter =
+    const chapterNumber =
       chapterMatch
         ? chapterMatch[1]
         : null;
 
-    // =======================================================
-    // DETECT CLASS
-    // =======================================================
-    const q = normalize(question);
+    const asksMCQ =
+      /\b(mcq|mcqs|multiple choice)\b/.test(q);
 
-    let grade = null;
-
-    if (
-      /\b10th\b/.test(q) ||
-      /\bclass 10\b/.test(q) ||
-      /\btenth\b/.test(q)
-    ) {
-      grade = 10;
-    } else if (
-      /\b9th\b/.test(q) ||
-      /\bclass 9\b/.test(q) ||
-      /\bninth\b/.test(q)
-    ) {
-      grade = 9;
-    }
-
-    // =======================================================
-    // DETECT SUBJECT
-    // =======================================================
-    let subject = null;
-
-    if (
-      /\b(math|maths|mathematics|vector|vectors|algebra|trigonometry)\b/.test(
+    const asksCRQ =
+      /\b(crq|crqs|constructed response)\b/.test(
         q
-      )
-    ) {
-      subject = "math";
-    }
+      );
 
-    if (
-      /\b(physics|magnetic|magnetism|electromagnetism|electromagnetic|motor|generator|transformer|diode|semiconductor|faraday|lenz|fleming|coriolis)\b/.test(
+    const asksLong =
+      /\b(long question|long questions|comprehensive question|comprehensive questions)\b/.test(
         q
-      )
-    ) {
-      subject = "physics";
-    }
+      );
+
+    const asksShort =
+      /\b(short question|short questions|short answer|definition|define)\b/.test(
+        q
+      );
 
     // =======================================================
-    // KNOWN EXACT CONCEPTS
-    // =======================================================
-    const conceptMap = [
-      {
-        key: "right hand grip rule",
-        phrases: [
-          "right hand grip rule",
-          "right-hand grip rule",
-          "right hand grip",
-          "right-hand grip"
-        ]
-      },
-      {
-        key: "coriolis effect",
-        phrases: [
-          "coriolis effect",
-          "coriolis force"
-        ]
-      },
-      {
-        key: "electromagnetic induction",
-        phrases: [
-          "electromagnetic induction"
-        ]
-      },
-      {
-        key: "faraday law",
-        phrases: [
-          "faraday's law",
-          "faraday law"
-        ]
-      },
-      {
-        key: "lenz law",
-        phrases: [
-          "lenz's law",
-          "lenz law"
-        ]
-      },
-      {
-        key: "fleming left hand rule",
-        phrases: [
-          "fleming's left hand rule",
-          "fleming left hand rule"
-        ]
-      },
-      {
-        key: "magnetic field",
-        phrases: [
-          "magnetic field"
-        ]
-      },
-      {
-        key: "electric motor",
-        phrases: [
-          "electric motor",
-          "dc motor"
-        ]
-      },
-      {
-        key: "ac generator",
-        phrases: [
-          "ac generator",
-          "alternating current generator"
-        ]
-      },
-      {
-        key: "transformer",
-        phrases: [
-          "transformer"
-        ]
-      },
-      {
-        key: "pn junction diode",
-        phrases: [
-          "pn junction diode",
-          "pn junction"
-        ]
-      }
-    ];
-
-    const concept =
-      conceptMap.find(c =>
-        c.phrases.some(p =>
-          q.includes(normalize(p))
-        )
-      ) || null;
-
-    // =======================================================
-    // EXACT URL SEARCH
+    // EXACT EXERCISE URL
     //
-    // THIS IS THE MOST IMPORTANT PART.
+    // THIS IS THE MOST IMPORTANT FIX.
     // =======================================================
-    function findExactExerciseURL() {
-      if (!exercise) return null;
 
-      const u =
-        sitemapURLs.find(url => {
-          const n = normalize(url);
+    function findExerciseUrl() {
+      if (
+        !exerciseUnit ||
+        !exerciseNumber
+      ) {
+        return null;
+      }
 
-          const unit =
-            exercise.unit;
+      const unit =
+        exerciseUnit;
 
-          const ex =
-            exercise.number;
+      const ex =
+        exerciseNumber;
+
+      // Exact filename patterns used by Hira Academy
+      const exactPatterns = [
+        `unit${unit}-exercise${ex}`,
+        `unit${unit}-exercise-${ex}`,
+        `unit-${unit}-exercise${ex}`,
+        `unit-${unit}-exercise-${ex}`
+      ];
+
+      // First: exact filename matching
+      for (const url of sitemapUrls) {
+        const filename =
+          url
+            .split("/")
+            .pop()
+            .toLowerCase();
+
+        for (const pattern of exactPatterns) {
+          if (
+            filename.startsWith(pattern)
+          ) {
+            return url;
+          }
+        }
+      }
+
+      // Second: normalized URL matching
+      for (const url of sitemapUrls) {
+        const n =
+          normalize(url);
+
+        if (
+          n.includes(
+            `unit${unit}`
+          ) &&
+          n.includes(
+            `exercise${ex}`
+          )
+        ) {
+          return url;
+        }
+      }
+
+      return null;
+    }
+
+    // =======================================================
+    // FIND CHAPTER MAIN PAGE
+    // =======================================================
+
+    function findChapterMainUrl() {
+      if (!chapterNumber) {
+        return null;
+      }
+
+      const chapter =
+        chapterNumber;
+
+      let candidates =
+        sitemapUrls.filter(url => {
+          const n =
+            normalize(url);
 
           return (
-            n.includes("exercise") &&
-            (
-              n.includes(
-                `unit${unit}`
-              ) ||
-              n.includes(
-                `unit-${unit}`
-              )
-            ) &&
-            (
-              n.includes(
-                `exercise${ex}`
-              ) ||
-              n.includes(
-                `exercise-${ex}`
-              ) ||
-                n.includes(
-                  `exercise ${ex}`
-                )
+            n.includes(
+              `chapter-${chapter}`
+            ) ||
+            n.includes(
+              `chapter${chapter}`
+            ) ||
+            n.includes(
+              `chapter ${chapter}`
             )
           );
         });
 
-      if (u) return u;
-
-      // More flexible exact match
-      return (
-        sitemapURLs.find(url => {
-          const n = normalize(url);
-
-          return (
-            n.includes(
-              `unit${exercise.unit}`
-            ) &&
-            n.includes(
-              `exercise${exercise.number}`
+      if (isPhysics) {
+        candidates =
+          candidates.filter(url =>
+            normalize(url).includes(
+              "physics"
             )
           );
-        }) || null
+      }
+
+      if (isMath) {
+        candidates =
+          candidates.filter(url =>
+            /math|mathematics/.test(
+              normalize(url)
+            )
+          );
+      }
+
+      // Prefer main chapter page,
+      // not MCQ/short/CRQ pages.
+      const main =
+        candidates.find(url => {
+          const n =
+            normalize(url);
+
+          return (
+            !n.includes("mcq") &&
+            !n.includes("short") &&
+            !n.includes("constructed") &&
+            !n.includes("long") &&
+            !n.includes("numerical")
+          );
+        });
+
+      return (
+        main ||
+        candidates[0] ||
+        null
       );
     }
 
-    function findChapterURL() {
-      if (!chapter) return null;
+    // =======================================================
+    // FIND SPECIALIZED CHAPTER PAGE
+    // =======================================================
 
-      const candidates =
-        sitemapURLs.filter(url => {
-          const n = normalize(url);
+    function findSpecialChapterUrl() {
+      if (!chapterNumber) {
+        return null;
+      }
+
+      const chapter =
+        chapterNumber;
+
+      let candidates =
+        sitemapUrls.filter(url => {
+          const n =
+            normalize(url);
 
           return (
             n.includes(
@@ -463,184 +457,255 @@ export default async function handler(req, res) {
           );
         });
 
-      if (!candidates.length) {
-        return null;
-      }
-
-      if (subject === "physics") {
-        const physics =
-          candidates.find(url =>
+      if (isPhysics) {
+        candidates =
+          candidates.filter(url =>
             normalize(url).includes(
               "physics"
             )
           );
-
-        if (physics) return physics;
       }
 
-      return candidates[0];
-    }
-
-    function findConceptURLs() {
-      if (!concept) return [];
-
-      const results = [];
-
-      for (const url of sitemapURLs) {
-        const n = normalize(url);
-
-        for (const phrase of concept.phrases) {
-          const words =
-            normalize(phrase)
-              .split(/\s+/)
-              .filter(Boolean);
-
-          const matched =
-            words.filter(word =>
-              n.includes(word)
-            ).length;
-
-          if (
-            matched === words.length
-          ) {
-            results.push(url);
-            break;
-          }
-        }
-      }
-
-      return [
-        ...new Set(results)
-      ];
-    }
-
-    // =======================================================
-    // SELECT SOURCE URL
-    //
-    // Priority:
-    // 1. Exact exercise
-    // 2. Exact chapter
-    // 3. Exact concept
-    // 4. Subject/class pages
-    // =======================================================
-    let sourceURL = null;
-
-    if (exercise) {
-      sourceURL =
-        findExactExerciseURL();
-
-      console.log(
-        "EXERCISE URL:",
-        sourceURL
-      );
-    }
-
-    if (!sourceURL && chapter) {
-      sourceURL =
-        findChapterURL();
-
-      console.log(
-        "CHAPTER URL:",
-        sourceURL
-      );
-    }
-
-    if (!sourceURL && concept) {
-      const conceptURLs =
-        findConceptURLs();
-
-      // Prefer correct subject/class
-      const filtered =
-        conceptURLs.filter(url => {
-          const n =
-            normalize(url);
-
-          if (
-            subject === "physics" &&
-            !n.includes("physics")
-          ) {
-            return false;
-          }
-
-          if (
-            grade === 9 &&
-            !n.includes("9th")
-          ) {
-            return false;
-          }
-
-          if (
-            grade === 10 &&
-            !n.includes("10th")
-          ) {
-            return false;
-          }
-
-          return true;
-        });
-
-      sourceURL =
-        filtered[0] ||
-        conceptURLs[0] ||
-        null;
-
-      console.log(
-        "CONCEPT URL:",
-        sourceURL
-      );
-    }
-
-    // =======================================================
-    // IF EXACT URL WAS NOT FOUND, DO BROAD SEARCH
-    // =======================================================
-    if (!sourceURL) {
-      const candidates =
-        sitemapURLs.filter(url => {
-          const n =
-            normalize(url);
-
-          if (
-            subject === "physics" &&
-            !n.includes("physics")
-          ) {
-            return false;
-          }
-
-          if (
-            subject === "math" &&
-            !(
-              n.includes("math") ||
-              n.includes("mathematics")
+      if (isMath) {
+        candidates =
+          candidates.filter(url =>
+            /math|mathematics/.test(
+              normalize(url)
             )
-          ) {
-            return false;
-          }
+          );
+      }
 
-          if (
-            grade === 9 &&
-            !n.includes("9th")
-          ) {
-            return false;
-          }
+      // Question-type priority
+      if (asksMCQ) {
+        const page =
+          candidates.find(url =>
+            normalize(url).includes(
+              "mcq"
+            )
+          );
 
-          if (
-            grade === 10 &&
-            !n.includes("10th")
-          ) {
-            return false;
-          }
+        if (page) return page;
+      }
 
-          return true;
-        });
+      if (asksCRQ) {
+        const page =
+          candidates.find(url =>
+            normalize(url).includes(
+              "constructed"
+            )
+          );
 
-      sourceURL =
-        candidates[0] || null;
+        if (page) return page;
+      }
+
+      if (asksLong) {
+        const page =
+          candidates.find(url =>
+            normalize(url).includes(
+              "long"
+            )
+          );
+
+        if (page) return page;
+      }
+
+      if (asksShort) {
+        const exerciseShort =
+          candidates.find(url =>
+            normalize(url).includes(
+              "exercise-short"
+            )
+          );
+
+        if (exerciseShort) {
+          return exerciseShort;
+        }
+
+        const short =
+          candidates.find(url =>
+            normalize(url).includes(
+              "short"
+            )
+          );
+
+        if (short) return short;
+      }
+
+      return findChapterMainUrl();
     }
 
     // =======================================================
-    // NO URL FOUND
+    // KNOWN CONCEPT → CHAPTER
     // =======================================================
-    if (!sourceURL) {
+
+    let conceptChapter =
+      null;
+
+    if (
+      q.includes(
+        "right hand grip rule"
+      ) ||
+      q.includes(
+        "right hand grip"
+      ) ||
+      q.includes(
+        "right-hand grip rule"
+      )
+    ) {
+      conceptChapter = "17";
+    }
+
+    if (
+      q.includes(
+        "electromagnetic induction"
+      ) ||
+      q.includes(
+        "faraday"
+      ) ||
+      q.includes(
+        "lenz"
+      ) ||
+      q.includes(
+        "ac generator"
+      ) ||
+      q.includes(
+        "transformer"
+      )
+    ) {
+      conceptChapter = "18";
+    }
+
+    if (
+      q.includes(
+        "coriolis effect"
+      )
+    ) {
+      // Coriolis is not automatically assumed
+      // to be in Hira Academy.
+      conceptChapter = null;
+    }
+
+    // =======================================================
+    // FIND CONCEPT PAGE
+    // =======================================================
+
+    function findConceptUrl() {
+      if (!conceptChapter) {
+        return null;
+      }
+
+      const chapter =
+        conceptChapter;
+
+      let candidates =
+        sitemapUrls.filter(url => {
+          const n =
+            normalize(url);
+
+          return (
+            n.includes(
+              `chapter${chapter}`
+            ) ||
+            n.includes(
+              `chapter-${chapter}`
+            )
+          );
+        });
+
+      if (isPhysics || conceptChapter === "17" || conceptChapter === "18") {
+        candidates =
+          candidates.filter(url =>
+            normalize(url).includes(
+              "physics"
+            )
+          );
+      }
+
+      // For definitions/rules, short-question pages
+      // are more useful than the homepage.
+      const short =
+        candidates.find(url =>
+          normalize(url).includes(
+            "short"
+          )
+        );
+
+      if (short) return short;
+
+      // Then main chapter page
+      const main =
+        candidates.find(url => {
+          const n =
+            normalize(url);
+
+          return (
+            !n.includes("mcq") &&
+            !n.includes("short") &&
+            !n.includes("constructed") &&
+            !n.includes("long")
+          );
+        });
+
+      return (
+        main ||
+        candidates[0] ||
+        null
+      );
+    }
+
+    // =======================================================
+    // SELECT SOURCE
+    //
+    // STRICT PRIORITY
+    // =======================================================
+
+    let sourceUrl = null;
+
+    // 1. Exercise request
+    if (isExercise) {
+      sourceUrl =
+        findExerciseUrl();
+
+      console.log(
+        "EXACT EXERCISE SOURCE:",
+        sourceUrl
+      );
+    }
+
+    // 2. Explicit chapter + question type
+    if (
+      !sourceUrl &&
+      chapterNumber
+    ) {
+      sourceUrl =
+        findSpecialChapterUrl();
+
+      console.log(
+        "CHAPTER SOURCE:",
+        sourceUrl
+      );
+    }
+
+    // 3. Known concept
+    if (!sourceUrl) {
+      sourceUrl =
+        findConceptUrl();
+
+      console.log(
+        "CONCEPT SOURCE:",
+        sourceUrl
+      );
+    }
+
+    // =======================================================
+    // DO NOT USE HOMEPAGE AS SOURCE
+    // =======================================================
+
+    if (
+      sourceUrl === SITE ||
+      sourceUrl === `${SITE}/` ||
+      !sourceUrl
+    ) {
       return res.status(200).json({
         reply:
           "I couldn't find this information in the current Hira Academy material."
@@ -648,414 +713,325 @@ export default async function handler(req, res) {
     }
 
     // =======================================================
-    // FETCH EXACT SOURCE PAGE
+    // FETCH SOURCE PAGE
     // =======================================================
-    const sourcePage =
-      await fetchPage(
-        sourceURL,
-        10000
+
+    const html =
+      await fetchText(
+        sourceUrl,
+        12000
       );
 
-    if (!sourcePage) {
+    if (!html) {
       return res.status(200).json({
         reply:
-          `I found the relevant Hira Academy page, but I couldn't read it right now.\n\n**Source: Hira Academy**\n[Open the original Hira Academy page](${sourceURL})`
+          `I found the relevant Hira Academy page, but I could not read it right now.\n\n**Source: Hira Academy**\n[Open the original Hira Academy page](${sourceUrl})`
       });
     }
 
-    const fullText =
-      htmlToText(
-        sourcePage.html
-      );
+    const pageText =
+      htmlToText(html);
+
+    if (!pageText) {
+      return res.status(200).json({
+        reply:
+          `I found the relevant Hira Academy page, but it contains no readable text.\n\n**Source: Hira Academy**\n[Open the original Hira Academy page](${sourceUrl})`
+      });
+    }
+
+    console.log(
+      "SOURCE TEXT:",
+      pageText.length
+    );
 
     // =======================================================
-    // EXTRACT RELEVANT CONTENT
+    // FIND RELEVANT SECTION
     // =======================================================
-    function findBestText(text) {
-      const normalizedText =
+
+    function getRelevantSection(text) {
+      const normalized =
         normalize(text);
 
-      let positions = [];
+      const searchTerms = [];
 
-      // ---------------------------------------------
-      // Exact concept
-      // ---------------------------------------------
-      if (concept) {
-        for (const phrase of concept.phrases) {
-          const p =
-            normalizedText.indexOf(
-              normalize(phrase)
-            );
+      // Exact exercise
+      if (
+        exerciseUnit &&
+        exerciseNumber
+      ) {
+        searchTerms.push(
+          `exercise ${exerciseUnit}.${exerciseNumber}`
+        );
 
-          if (p !== -1) {
-            positions.push(p);
-          }
-        }
-      }
-
-      // ---------------------------------------------
-      // Exercise
-      // ---------------------------------------------
-      if (exercise) {
-        const patterns = [
-          `exercise ${exercise.unit}.${exercise.number}`,
-          `exercise ${exercise.unit} ${exercise.number}`,
-          `exercise ${exercise.number}`
-        ];
-
-        for (const pattern of patterns) {
-          const p =
-            normalizedText.indexOf(
-              pattern
-            );
-
-          if (p !== -1) {
-            positions.push(p);
-          }
-        }
-      }
-
-      // ---------------------------------------------
-      // Chapter
-      // ---------------------------------------------
-      if (chapter) {
-        const patterns = [
-          `chapter ${chapter}`,
-          `chapter${chapter}`
-        ];
-
-        for (const pattern of patterns) {
-          const p =
-            normalizedText.indexOf(
-              pattern
-            );
-
-          if (p !== -1) {
-            positions.push(p);
-          }
-        }
-      }
-
-      // ---------------------------------------------
-      // Important question words
-      // ---------------------------------------------
-      const stopWords =
-        new Set([
-          "what",
-          "what's",
-          "whats",
-          "is",
-          "are",
-          "the",
-          "a",
-          "an",
-          "of",
-          "in",
-          "on",
-          "for",
-          "to",
-          "and",
-          "or",
-          "why",
-          "how",
-          "does",
-          "do",
-          "did",
-          "can",
-          "could",
-          "would",
-          "please",
-          "tell",
-          "me",
-          "about",
-          "explain",
-          "define",
-          "definition",
-          "according",
-          "hira",
-          "academy"
-        ]);
-
-      const words =
-        q.split(/\s+/)
-          .filter(
-            word =>
-              word.length >= 3 &&
-              !stopWords.has(word)
-          );
-
-      for (const word of words) {
-        const p =
-          normalizedText.indexOf(
-            word
-          );
-
-        if (p !== -1) {
-          positions.push(p);
-        }
-      }
-
-      if (!positions.length) {
-        return text.substring(
-          0,
-          5000
+        searchTerms.push(
+          `exercise ${exerciseUnit} ${exerciseNumber}`
         );
       }
 
-      const position =
-        Math.min(...positions);
+      // Exact concepts
+      if (
+        q.includes(
+          "right hand grip"
+        )
+      ) {
+        searchTerms.push(
+          "right hand grip rule"
+        );
 
-      // ---------------------------------------------
-      // IMPORTANT:
-      // only return a small local window.
-      // ---------------------------------------------
+        searchTerms.push(
+          "right-hand grip rule"
+        );
+      }
+
+      if (
+        q.includes(
+          "electromagnetic induction"
+        )
+      ) {
+        searchTerms.push(
+          "electromagnetic induction"
+        );
+      }
+
+      if (
+        q.includes("faraday")
+      ) {
+        searchTerms.push(
+          "faraday"
+        );
+      }
+
+      if (
+        q.includes("lenz")
+      ) {
+        searchTerms.push(
+          "lenz"
+        );
+      }
+
+      if (
+        q.includes("coriolis")
+      ) {
+        searchTerms.push(
+          "coriolis"
+        );
+      }
+
+      // Search for exact phrase
+      let bestPosition = -1;
+
+      for (const term of searchTerms) {
+        const pos =
+          normalized.indexOf(
+            normalize(term)
+          );
+
+        if (
+          pos !== -1 &&
+          (
+            bestPosition === -1 ||
+            pos < bestPosition
+          )
+        ) {
+          bestPosition = pos;
+        }
+      }
+
+      if (
+        bestPosition === -1
+      ) {
+        // For an exact exercise page,
+        // the page itself is relevant.
+        if (isExercise) {
+          return text.substring(
+            0,
+            14000
+          );
+        }
+
+        return text.substring(
+          0,
+          9000
+        );
+      }
+
+      // Get enough surrounding material
       const start =
         Math.max(
           0,
-          position - 1200
+          bestPosition - 1500
         );
 
       const end =
         Math.min(
           text.length,
-          position + 5000
+          bestPosition + 9000
         );
 
-      return text
-        .substring(
-          start,
-          end
-        )
-        .trim();
+      return text.substring(
+        start,
+        end
+      );
     }
 
     let relevantText =
-      findBestText(
-        fullText
+      getRelevantSection(
+        pageText
       );
 
-    // Do not send enormous pages to Gemini.
+    // Gemini input safety
     relevantText =
       relevantText.substring(
         0,
-        8000
+        14000
       );
-
-    console.log(
-      "SOURCE:",
-      sourceURL
-    );
-
-    console.log(
-      "SOURCE TEXT LENGTH:",
-      relevantText.length
-    );
-
-    // =======================================================
-    // SPECIAL CHECK:
-    // CONCEPT MUST ACTUALLY EXIST ON THIS PAGE
-    // =======================================================
-    if (concept) {
-      const pageNormalized =
-        normalize(fullText);
-
-      const conceptExists =
-        concept.phrases.some(
-          phrase =>
-            pageNormalized.includes(
-              normalize(phrase)
-            )
-        );
-
-      if (!conceptExists) {
-        // If concept wasn't found on the selected page,
-        // search other exact concept URLs.
-        const alternatives =
-          findConceptURLs();
-
-        for (const altURL of alternatives) {
-          if (
-            altURL === sourceURL
-          ) {
-            continue;
-          }
-
-          const altPage =
-            await fetchPage(
-              altURL,
-              8000
-            );
-
-          if (!altPage) {
-            continue;
-          }
-
-          const altText =
-            htmlToText(
-              altPage.html
-            );
-
-          const altNormalized =
-            normalize(altText);
-
-          const exists =
-            concept.phrases.some(
-              phrase =>
-                altNormalized.includes(
-                  normalize(phrase)
-                )
-            );
-
-          if (exists) {
-            sourceURL =
-              altURL;
-
-            relevantText =
-              findBestText(
-                altText
-              ).substring(
-                0,
-                8000
-              );
-
-            break;
-          }
-        }
-      }
-    }
 
     // =======================================================
     // GEMINI
     // =======================================================
+
     let answer = "";
 
-    if (GEMINI_KEY) {
-      try {
-        const gemini =
-          await fetch(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type":
-                  "application/json",
-                "x-goog-api-key":
-                  GEMINI_KEY
-              },
-              body: JSON.stringify({
-                systemInstruction: {
-                  parts: [
-                    {
-                      text: `
+    try {
+      const response =
+        await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              "x-goog-api-key":
+                apiKey
+            },
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [
+                  {
+                    text: `
 You are the official Hira Academy teaching assistant.
 
-Your ONLY knowledge source for this answer is the Hira Academy material supplied below.
+IMPORTANT RULES:
 
-Do not use old textbook information.
-Do not use unrelated Hira Academy pages.
-Do not invent an answer.
-Do not mix chapters.
-Answer only the user's current question.
-
-If the supplied material directly contains the answer, use it faithfully.
-
-For a definition/rule/law:
-- give the direct definition first
-- keep it short
-- do not add unnecessary general knowledge
-
-For an exercise:
-- answer the requested exercise/question using the supplied material
-- preserve formulas and mathematical notation
-- do not invent questions that are not present
-
-For a chapter request:
-- summarize only the supplied chapter material
-
-If the supplied material genuinely does not answer the question, say:
+1. The Hira Academy SOURCE CONTENT below is your only source.
+2. Do NOT use your old/general knowledge when the source does not support an answer.
+3. Do NOT mix information from other chapters.
+4. Do NOT mention or cite any Hira Academy page other than the SOURCE PAGE.
+5. Do NOT invent questions, exercise numbers, answers, formulas, or explanations.
+6. Answer the user's exact question.
+7. For mathematics, preserve the supplied mathematical wording and formulas.
+8. For physics definitions/rules, give a concise textbook-faithful answer.
+9. If the source genuinely does not contain the answer, say exactly:
 "I couldn't find this information in the current Hira Academy material."
+10. Do not output a source link yourself. The API will add the source link.
 
 SOURCE PAGE:
-${sourceURL}
+${sourceUrl}
 
 SOURCE CONTENT:
 ${relevantText}
 `
+                  }
+                ]
+              },
+
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: question
                     }
                   ]
-                },
-
-                contents: [
-                  {
-                    role: "user",
-                    parts: [
-                      {
-                        text: question
-                      }
-                    ]
-                  }
-                ],
-
-                generationConfig: {
-                  temperature: 0.1,
-                  maxOutputTokens: 1000
                 }
-              })
-            }
-          );
+              ],
 
-        if (gemini.ok) {
-          const data =
-            await gemini.json();
-
-          answer =
-            data?.candidates?.[0]
-              ?.content?.parts
-              ?.map(
-                p => p.text || ""
-              )
-              .join("")
-              .trim() || "";
-        } else {
-          console.log(
-            "GEMINI ERROR STATUS:",
-            gemini.status
-          );
-        }
-      } catch (error) {
-        console.log(
-          "GEMINI ERROR:",
-          error.message
+              generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 1400
+              }
+            })
+          }
         );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        console.log(
+          "GEMINI STATUS:",
+          response.status,
+          data?.error?.message
+        );
+
+        // Don't expose Gemini errors
+        // to the student.
+        answer = "";
+      } else {
+        answer =
+          data?.candidates?.[0]
+            ?.content?.parts
+            ?.map(
+              p => p.text || ""
+            )
+            .join("")
+            .trim() || "";
       }
+    } catch (error) {
+      console.log(
+        "GEMINI ERROR:",
+        error.message
+      );
+
+      answer = "";
     }
 
     // =======================================================
-    // GEMINI FALLBACK
+    // FALLBACK IF GEMINI QUOTA IS EXCEEDED
     // =======================================================
+
     if (!answer) {
       answer =
-        `According to Hira Academy:\n\n${relevantText}`;
+        `According to the Hira Academy material:\n\n${relevantText}`;
     }
 
     // =======================================================
-    // SOURCE LINK
+    // REMOVE BAD/UNRELATED SOURCE LINKS GENERATED BY MODEL
     // =======================================================
+
+    answer =
+      answer.replace(
+        /\*\*Source:\s*Hira Academy\*\*[\s\S]*$/i,
+        ""
+      )
+      .trim();
+
+    answer =
+      answer.replace(
+        /https?:\/\/hiraacademy\.com\.pk\/[^\s)]+/gi,
+        ""
+      )
+      .trim();
+
+    // =======================================================
+    // FINAL SOURCE
+    // =======================================================
+
     answer +=
-      `\n\n---\n**Source: Hira Academy**\n[Open the original Hira Academy page](${sourceURL})`;
+      `\n\n---\n**Source: Hira Academy**\n[Open the original Hira Academy page](${sourceUrl})`;
+
+    // =======================================================
+    // RESPONSE
+    // =======================================================
 
     return res.status(200).json({
       reply: answer,
-      sourceUrl: sourceURL,
-      sourceTitle:
-        getTitle(
-          sourcePage.html
-        )
+      sourceUrl: sourceUrl
     });
 
   } catch (error) {
     console.error(
-      "HIRA API ERROR:",
+      "HIRA CHAT ERROR:",
       error
     );
 
