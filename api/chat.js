@@ -28,12 +28,11 @@ export default async function handler(req, res) {
       try {
         body = JSON.parse(body);
       } catch {
-        return res.status(400).json({ error: "Invalid JSON." });
+        return res.status(400).json({ error: "Invalid JSON body." });
       }
     }
 
     const messages = Array.isArray(body?.messages) ? body.messages : [];
-
     const userMessage = [...messages]
       .reverse()
       .find(m => m && m.role === "user" && typeof m.content === "string");
@@ -41,11 +40,11 @@ export default async function handler(req, res) {
     const question = userMessage?.content?.trim();
 
     if (!question) {
-      return res.status(400).json({ error: "No question provided." });
+      return res.status(400).json({ error: "No question provided in messages." });
     }
 
     // =========================================================
-    // SITEMAP CACHING (30 MIN) — no per-request cost either way
+    // SITEMAP CACHING (30 MIN)
     // =========================================================
     if (!globalThis.hiraCache) {
       globalThis.hiraCache = { urls: null, timestamp: 0 };
@@ -55,7 +54,7 @@ export default async function handler(req, res) {
     let urls = globalThis.hiraCache.urls;
 
     if (!urls || Date.now() - globalThis.hiraCache.timestamp > CACHE_TIME) {
-      urls = await getSitemapUrls(SITEMAP_URL, SITE);
+      urls = await fetchSitemapUrlsRecursively(SITEMAP_URL, SITE);
       globalThis.hiraCache.urls = urls;
       globalThis.hiraCache.timestamp = Date.now();
     }
@@ -63,15 +62,12 @@ export default async function handler(req, res) {
     if (!urls || !urls.length) {
       return res.status(500).json({
         error: "Could not read the Hira Academy sitemap.",
-        reply:
-          "I'm having trouble reading the site map right now. Please try again in a moment, or visit " +
-          BASE_URL + " directly."
+        reply: `I'm having trouble reading the site map right now. Please try again in a moment, or visit ${BASE_URL} directly.`
       });
     }
 
     // =========================================================
-    // SCORE URLS BY SLUG — no page downloads, so this is instant
-    // and cannot time out, no matter how many pages the site has.
+    // SCORE URLS BY SLUG
     // =========================================================
     const questionWords = tokenize(question);
 
@@ -79,22 +75,17 @@ export default async function handler(req, res) {
       .map(url => ({ url, score: scoreUrl(url, questionWords) }))
       .sort((a, b) => b.score - a.score);
 
-    // Only keep genuine matches
     ranked = ranked.filter(item => item.score > 0).slice(0, 3);
 
     if (!ranked.length) {
       return res.status(200).json({
-        reply:
-          "I couldn't find a page for that on Hira Academy yet. " +
-          `You can browse all topics here: ${BASE_URL}`,
+        reply: `I couldn't find a page for that on Hira Academy yet. You can browse all topics here: ${BASE_URL}`,
         sourceUrl: BASE_URL
       });
     }
 
     // =========================================================
-    // GET NICE TITLES FOR THE TOP MATCHES (small, bounded, fast —
-    // at most 3 lightweight fetches, each with its own timeout,
-    // so a slow/broken page can never hang the whole request)
+    // FETCH TITLES SAFELY
     // =========================================================
     const withTitles = await Promise.all(
       ranked.map(async item => {
@@ -104,18 +95,14 @@ export default async function handler(req, res) {
     );
 
     // =========================================================
-    // BUILD REPLY — direct links, no AI generation, no API cost
+    // BUILD REPLY
     // =========================================================
-    const lines = withTitles.map(
-      page => `- [${page.title}](${page.url})`
-    );
+    const lines = withTitles.map(page => `- [${page.title}](${page.url})`);
 
     const reply =
       withTitles.length === 1
         ? `Here's the page on Hira Academy for that:\n\n${lines[0]}`
-        : `Here are the Hira Academy pages that match your question:\n\n${lines.join(
-            "\n"
-          )}`;
+        : `Here are the Hira Academy pages that match your question:\n\n${lines.join("\n")}`;
 
     return res.status(200).json({
       reply,
@@ -125,64 +112,76 @@ export default async function handler(req, res) {
     console.error("HIRA CHAT ERROR:", error);
     return res.status(500).json({
       error: error?.message || "Internal Server Error",
-      reply:
-        "Something went wrong on my end. Please try again, or visit " +
-        "https://hiraacademy.com.pk directly."
+      reply: `Something went wrong on my end. Please try again, or visit ${BASE_URL} directly.`
     });
   }
 }
 
 // =============================================================
-// SITEMAP READER
+// RECURSIVE SITEMAP READER (Handles Sitemap Indexes + Child Sitemaps)
 // =============================================================
-async function getSitemapUrls(sitemapUrl, allowedHost) {
+async function fetchSitemapUrlsRecursively(sitemapUrl, allowedHost, depth = 0) {
+  if (depth > 3) return []; // Prevent infinite recursion
+
   try {
     const response = await fetch(sitemapUrl, {
-      headers: { "User-Agent": "HiraAcademy-AI/1.0" }
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
     });
 
-    if (!response.ok) {
-      console.error("SITEMAP STATUS:", response.status);
-      return [];
-    }
+    if (!response.ok) return [];
 
     const xml = await response.text();
-    const urls = [];
-    const matches = xml.matchAll(/<loc>\s*(.*?)\s*<\/loc>/gi);
+    const locMatches = [...xml.matchAll(/<loc>\s*(.*?)\s*<\/loc>/gi)].map(m => decodeXml(m[1]));
 
-    for (const match of matches) {
-      const url = decodeXml(match[1]);
+    const pageUrls = [];
+    const childSitemaps = [];
+
+    for (const url of locMatches) {
       try {
         const parsed = new URL(url);
         if (
           parsed.hostname === allowedHost ||
           parsed.hostname === `www.${allowedHost}`
         ) {
-          urls.push(parsed.href);
+          if (url.endsWith(".xml") || url.includes("sitemap")) {
+            childSitemaps.push(url);
+          } else {
+            pageUrls.push(parsed.href);
+          }
         }
       } catch {
         // Skip malformed URLs
       }
     }
 
-    return [...new Set(urls)];
+    if (childSitemaps.length > 0) {
+      const nestedResults = await Promise.all(
+        childSitemaps.map(childUrl => fetchSitemapUrlsRecursively(childUrl, allowedHost, depth + 1))
+      );
+      return [...new Set([...pageUrls, ...nestedResults.flat()])];
+    }
+
+    return [...new Set(pageUrls)];
   } catch (error) {
-    console.error("SITEMAP ERROR:", error);
+    console.error(`SITEMAP ERROR (${sitemapUrl}):`, error);
     return [];
   }
 }
 
 // =============================================================
-// FETCH A PAGE'S <title> WITH A HARD TIMEOUT — never blocks the
-// response if one page is slow or down.
+// FETCH TITLE WITH HARD TIMEOUT
 // =============================================================
-async function fetchTitleSafely(url, timeoutMs = 3000) {
+async function fetchTitleSafely(url, timeoutMs = 2500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 HiraAcademy-AI/1.0" },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
       signal: controller.signal
     });
 
@@ -199,8 +198,7 @@ async function fetchTitleSafely(url, timeoutMs = 3000) {
 }
 
 // =============================================================
-// FALLBACK TITLE FROM THE URL SLUG (used only if the live title
-// fetch fails or times out, so a reply is always returned)
+// FALLBACK TITLE FROM URL SLUG
 // =============================================================
 function titleFromSlug(url) {
   try {
