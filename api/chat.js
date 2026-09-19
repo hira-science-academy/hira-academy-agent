@@ -1,5 +1,7 @@
+```javascript
 export default async function handler(req, res) {
   const SITE = "hiraacademy.com.pk";
+  const HOME = "https://hiraacademy.com.pk/";
 
   // =========================
   // CORS
@@ -23,7 +25,7 @@ export default async function handler(req, res) {
 
   try {
     // =========================
-    // GEMINI API KEY
+    // API KEY
     // =========================
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -55,10 +57,10 @@ export default async function handler(req, res) {
     const latestUserMessage = [...messages]
       .reverse()
       .find(
-        m =>
-          m &&
-          m.role === "user" &&
-          typeof m.content === "string"
+        message =>
+          message &&
+          message.role === "user" &&
+          typeof message.content === "string"
       );
 
     const question = latestUserMessage?.content?.trim();
@@ -69,145 +71,119 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log("HIRA QUESTION:", question);
+    console.log("=================================");
+    console.log("HIRA ACADEMY QUESTION:");
+    console.log(question);
+    console.log("=================================");
 
     // =========================
-    // GEMINI SYSTEM INSTRUCTION
+    // PROMPT
     // =========================
-    const systemInstruction = `
-You are the official Hira Academy AI Assistant.
+    const prompt = `
+You are the official AI assistant of Hira Science Academy.
 
-Your job is to answer students' questions using the CURRENT content
-available on the official Hira Academy website:
-
-https://hiraacademy.com.pk/
-
-VERY IMPORTANT RULES:
-
-1. SEARCH THE OFFICIAL HIRA ACADEMY WEBSITE FIRST.
-
-2. Your website restriction is:
-   site:hiraacademy.com.pk
-
-3. The student may ask about ANY SUBJECT available on Hira Academy.
-   This includes Mathematics, Physics, Chemistry, Biology,
-   Pakistan Studies, Islamiat and other Class 9/10 educational
-   material available on the website.
-
-4. Find the MOST SPECIFIC Hira Academy page that contains the
-   answer.
-
-5. Do NOT choose the homepage simply because it is from
-   Hira Academy.
-
-6. Do NOT use an unrelated Hira Academy page.
-
-7. If an exact question exists on a Hira Academy page, use that
-   question and answer.
-
-8. If the question is about an exercise, prefer the exact
-   exercise page.
-
-9. If it is a short question, prefer the relevant Short Questions
-   page.
-
-10. If it is a CRQ, prefer the Constructed Response page.
-
-11. If it is a long/comprehensive question, prefer the Long Questions
-    page.
-
-12. If it is an MCQ, prefer the relevant MCQ page.
-
-13. If the question is a general concept, use the relevant chapter
-    page or definitions page.
-
-14. ANSWERS MUST BE SHORT.
-    Normally answer in 1-4 sentences.
-
-15. Do NOT give a long lecture or unnecessary background.
-
-16. Do NOT invent information.
-
-17. Do NOT combine unrelated Hira Academy pages.
-
-18. Do NOT use old model knowledge when the answer can be found
-    on Hira Academy.
-
-19. For Mathematics, preserve formulas and mathematical notation.
-
-20. For Physics and other subjects, remain faithful to the wording
-    and information on the Hira Academy page.
-
-21. After answering, provide the EXACT Hira Academy page used
-    for the answer.
-
-22. The source format must be:
-
-**Source: Hira Academy**
-[Open the relevant Hira Academy page](ACTUAL_PAGE_URL)
-
-23. ACTUAL_PAGE_URL must be the page that contains the relevant
-    information. NEVER invent a URL.
-
-24. If the answer genuinely cannot be found anywhere on
-    hiraacademy.com.pk, say:
-
-"I couldn't find this information in the current Hira Academy material."
-
-25. If Hira Academy contains the answer, DO NOT say that you
-    couldn't find it.
-
-26. Never provide sources from another website.
-
-27. Answer the student's question directly. Do not describe your
-    search process.
+WEBSITE:
+https://${SITE}/
 
 STUDENT QUESTION:
 ${question}
+
+YOUR TASK:
+
+Find the answer ONLY from the official Hira Academy website.
+
+MANDATORY SEARCH:
+
+Search Google for:
+
+site:${SITE} ${question}
+
+You MUST search the Hira Academy website before answering.
+
+IMPORTANT:
+
+- Use ONLY pages from ${SITE}.
+- Do NOT use other educational websites.
+- Do NOT answer from general model knowledge if the answer can be
+  found on Hira Academy.
+- Find the page that actually contains information relevant to
+  the student's question.
+- Do not select the homepage unless the homepage itself contains
+  the answer.
+- Do not select an unrelated chapter page.
+- Prefer the most specific page.
+
+PAGE PRIORITY:
+
+1. Exact question / answer page
+2. Exercise page
+3. Short Questions page
+4. CRQs page
+5. Long Questions page
+6. MCQs page
+7. Relevant chapter page
+8. Definitions page
+9. Other relevant Hira Academy page
+
+ANSWER STYLE:
+
+- Give the answer first.
+- Keep it SHORT.
+- Normally 1–4 sentences.
+- Do not give unnecessary explanation.
+- Preserve formulas and important scientific terms.
+- For exam questions, give an exam-friendly answer.
+- Do not invent information.
+- Do not combine unrelated pages.
+
+SOURCE:
+
+You MUST identify the exact Hira Academy page that supports
+your answer.
+
+Return your answer in EXACTLY this format:
+
+ANSWER:
+<short answer>
+
+SOURCE_URL:
+<exact Hira Academy URL>
+
+If the information genuinely cannot be found anywhere on
+${SITE}, return:
+
+ANSWER:
+I couldn't find this information in the current Hira Academy material.
+
+SOURCE_URL:
+NONE
 `;
 
     // =========================
-    // GEMINI + GOOGLE SEARCH
+    // GEMINI REQUEST
     // =========================
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
       {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey
         },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [
-              {
-                text: systemInstruction
-              }
-            ]
-          },
 
+        body: JSON.stringify({
           contents: [
             {
               role: "user",
               parts: [
                 {
-                  text: `
-Search the official Hira Academy website for the answer.
-
-Search restriction:
-site:${SITE}
-
-Student question:
-${question}
-
-Find the most relevant Hira Academy page and answer briefly.
-`
+                  text: prompt
                 }
               ]
             }
           ],
 
-          // Enable Google Search grounding
           tools: [
             {
               google_search: {}
@@ -215,8 +191,7 @@ Find the most relevant Hira Academy page and answer briefly.
           ],
 
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 900
+            maxOutputTokens: 800
           }
         })
       }
@@ -224,10 +199,7 @@ Find the most relevant Hira Academy page and answer briefly.
 
     const data = await response.json();
 
-    console.log(
-      "GEMINI STATUS:",
-      response.status
-    );
+    console.log("GEMINI STATUS:", response.status);
 
     // =========================
     // GEMINI ERROR
@@ -235,7 +207,7 @@ Find the most relevant Hira Academy page and answer briefly.
     if (!response.ok) {
       console.error(
         "GEMINI ERROR:",
-        data
+        JSON.stringify(data, null, 2)
       );
 
       return res.status(response.status).json({
@@ -246,9 +218,9 @@ Find the most relevant Hira Academy page and answer briefly.
     }
 
     // =========================
-    // GET MODEL ANSWER
+    // GET TEXT
     // =========================
-    let reply =
+    const rawReply =
       data?.candidates?.[0]
         ?.content
         ?.parts
@@ -256,7 +228,10 @@ Find the most relevant Hira Academy page and answer briefly.
         .join("")
         .trim();
 
-    if (!reply) {
+    console.log("GEMINI RAW RESPONSE:");
+    console.log(rawReply);
+
+    if (!rawReply) {
       return res.status(200).json({
         reply:
           "I couldn't find this information in the current Hira Academy material."
@@ -264,86 +239,144 @@ Find the most relevant Hira Academy page and answer briefly.
     }
 
     // =========================
-    // CLEAN DUPLICATE SOURCE
+    // EXTRACT ANSWER
     // =========================
-    reply = reply
-      .replace(
-        /\*\*Source:\s*Hira Academy\*\*[\s\S]*$/i,
-        ""
-      )
-      .trim();
+    let answer = "";
+    let sourceUrl = "";
 
-    // Remove accidental Hira links generated in body
-    reply = reply.replace(
-      /https?:\/\/hiraacademy\.com\.pk\/[^\s)]+/gi,
-      ""
+    const answerMatch = rawReply.match(
+      /ANSWER:\s*([\s\S]*?)(?=\n\s*SOURCE_URL:)/i
     );
 
+    const sourceMatch = rawReply.match(
+      /SOURCE_URL:\s*(\S+)/i
+    );
+
+    if (answerMatch) {
+      answer = answerMatch[1].trim();
+    }
+
+    if (sourceMatch) {
+      sourceUrl = sourceMatch[1].trim();
+    }
+
     // =========================
-    // EXTRACT SEARCH SOURCES
+    // CLEAN SOURCE URL
     // =========================
-    const groundingChunks =
-      data?.candidates?.[0]
-        ?.groundingMetadata
-        ?.groundingChunks || [];
+    sourceUrl = sourceUrl
+      .replace(/[)\],.;]+$/, "")
+      .trim();
 
-    const hiraSources = [];
+    // =========================
+    // VALIDATE SOURCE
+    // =========================
+    let validSource = false;
 
-    for (const chunk of groundingChunks) {
-      const uri =
-        chunk?.web?.uri;
+    if (sourceUrl && sourceUrl !== "NONE") {
+      try {
+        const parsed = new URL(sourceUrl);
 
-      if (
-        uri &&
-        uri.includes("hiraacademy.com.pk")
-      ) {
-        hiraSources.push(uri);
+        validSource =
+          parsed.protocol === "https:" &&
+          (
+            parsed.hostname === SITE ||
+            parsed.hostname === `www.${SITE}`
+          );
+      } catch {
+        validSource = false;
       }
     }
 
-    const uniqueSources = [
-      ...new Set(hiraSources)
-    ];
-
     // =========================
-    // FIND BEST SOURCE
+    // FALLBACK TO GROUNDING
     // =========================
-    let sourceUrl =
-      uniqueSources[0] || null;
+    if (!validSource) {
+      const groundingChunks =
+        data?.candidates?.[0]
+          ?.groundingMetadata
+          ?.groundingChunks || [];
 
-    // Prefer a specific page over homepage
-    const specificSource =
-      uniqueSources.find(url => {
+      for (const chunk of groundingChunks) {
+        const uri = chunk?.web?.uri;
+
+        if (!uri) continue;
+
         try {
-          const parsed = new URL(url);
+          const parsed = new URL(uri);
 
-          return (
-            parsed.pathname !== "/" &&
-            parsed.pathname.length > 1
-          );
+          if (
+            parsed.hostname === SITE ||
+            parsed.hostname === `www.${SITE}`
+          ) {
+            sourceUrl = uri;
+            validSource = true;
+            break;
+          }
         } catch {
-          return false;
+          // Ignore invalid URLs
         }
-      });
-
-    if (specificSource) {
-      sourceUrl = specificSource;
+      }
     }
 
     // =========================
-    // SOURCE RESPONSE
+    // IF ANSWER IS MISSING
     // =========================
-    if (sourceUrl) {
-      reply +=
-        `\n\n---\n**Source: Hira Academy**\n[Open the relevant Hira Academy page](${sourceUrl})`;
-    } else {
-      reply +=
-        `\n\n---\n**Source: Hira Academy**\n[Visit Hira Academy](https://hiraacademy.com.pk/)`;
+    if (!answer) {
+      answer = rawReply
+        .replace(/SOURCE_URL:[\s\S]*$/i, "")
+        .replace(/^ANSWER:\s*/i, "")
+        .trim();
+    }
+
+    // =========================
+    // REMOVE ANY URL FROM ANSWER
+    // =========================
+    answer = answer.replace(
+      /https?:\/\/(?:www\.)?hiraacademy\.com\.pk\/\S*/gi,
+      ""
+    ).trim();
+
+    // =========================
+    // WEBSITE NOT FOUND
+    // =========================
+    const notFound =
+      /couldn't find this information/i.test(answer) ||
+      /could not find this information/i.test(answer);
+
+    if (notFound && !validSource) {
+      return res.status(200).json({
+        reply:
+          "I couldn't find this information in the current Hira Academy material.",
+        sourceUrl: null
+      });
+    }
+
+    // =========================
+    // FINAL SOURCE
+    // =========================
+    if (!validSource) {
+      console.warn(
+        "NO VALID HIRA SOURCE FOUND"
+      );
+
+      return res.status(200).json({
+        reply:
+          answer ||
+          "I couldn't find this information in the current Hira Academy material.",
+        sourceUrl: null
+      });
     }
 
     // =========================
     // FINAL RESPONSE
     // =========================
+    const reply =
+      `${answer}\n\n` +
+      `**Source: Hira Academy**\n` +
+      `[Open the relevant Hira Academy page](${sourceUrl})`;
+
+    console.log("FINAL SOURCE:", sourceUrl);
+
     return res.status(200).json({
       reply,
       sourceUrl
@@ -357,8 +390,9 @@ Find the most relevant Hira Academy page and answer briefly.
 
     return res.status(500).json({
       error:
-        error.message ||
+        error?.message ||
         "Internal Server Error"
     });
   }
 }
+```
