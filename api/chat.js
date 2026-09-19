@@ -1,11 +1,12 @@
 ```javascript
 export default async function handler(req, res) {
   const SITE = "hiraacademy.com.pk";
-  const HOME = "https://hiraacademy.com.pk/";
+  const BASE_URL = "https://hiraacademy.com.pk";
+  const SITEMAP_URL = `${BASE_URL}/sitemap.xml`;
 
-  // =========================
+  // =========================================================
   // CORS
-  // =========================
+  // =========================================================
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader(
@@ -24,9 +25,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    // =========================
-    // API KEY
-    // =========================
+    // =========================================================
+    // GEMINI API KEY
+    // =========================================================
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
@@ -35,9 +36,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // =========================
-    // REQUEST BODY
-    // =========================
+    // =========================================================
+    // READ REQUEST
+    // =========================================================
     let body = req.body;
 
     if (typeof body === "string") {
@@ -54,16 +55,16 @@ export default async function handler(req, res) {
       ? body.messages
       : [];
 
-    const latestUserMessage = [...messages]
+    const userMessage = [...messages]
       .reverse()
       .find(
-        message =>
-          message &&
-          message.role === "user" &&
-          typeof message.content === "string"
+        m =>
+          m &&
+          m.role === "user" &&
+          typeof m.content === "string"
       );
 
-    const question = latestUserMessage?.content?.trim();
+    const question = userMessage?.content?.trim();
 
     if (!question) {
       return res.status(400).json({
@@ -71,86 +72,171 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log("=================================");
-    console.log("HIRA ACADEMY QUESTION:");
-    console.log(question);
-    console.log("=================================");
+    console.log("======================================");
+    console.log("HIRA QUESTION:", question);
+    console.log("======================================");
 
-    // =========================
-    // PROMPT
-    // =========================
+    // =========================================================
+    // SIMPLE CACHE
+    // =========================================================
+    // Vercel may reuse the same function instance.
+    // This avoids downloading the sitemap repeatedly.
+    if (!globalThis.hiraCache) {
+      globalThis.hiraCache = {
+        urls: null,
+        timestamp: 0
+      };
+    }
+
+    // Cache sitemap URLs for 30 minutes.
+    const CACHE_TIME = 30 * 60 * 1000;
+
+    let urls = globalThis.hiraCache.urls;
+
+    if (
+      !urls ||
+      Date.now() - globalThis.hiraCache.timestamp > CACHE_TIME
+    ) {
+      console.log("Downloading sitemap...");
+
+      urls = await getSitemapUrls(SITEMAP_URL, SITE);
+
+      globalThis.hiraCache.urls = urls;
+      globalThis.hiraCache.timestamp = Date.now();
+
+      console.log(
+        "SITEMAP URL COUNT:",
+        urls.length
+      );
+    }
+
+    if (!urls.length) {
+      return res.status(500).json({
+        error:
+          "Could not read the Hira Academy sitemap."
+      });
+    }
+
+    // =========================================================
+    // SEARCH ACTUAL PAGE CONTENT
+    // =========================================================
+    //
+    // IMPORTANT:
+    // We do NOT decide relevance from filename only.
+    //
+    // We download pages and search:
+    //   - page title
+    //   - headings
+    //   - visible text
+    //   - question wording
+    //
+    // This is what allows:
+    //
+    // "sea breeze"
+    //
+    // to find:
+    //
+    // Chapter11-Short-Questions.html
+    //
+    // =========================================================
+
+    const candidates =
+      await findRelevantPages(
+        urls,
+        question
+      );
+
+    console.log(
+      "RELEVANT PAGE COUNT:",
+      candidates.length
+    );
+
+    // =========================================================
+    // NOTHING FOUND
+    // =========================================================
+    if (!candidates.length) {
+      return res.status(200).json({
+        reply:
+          "I couldn't find this information in the current Hira Academy material.",
+        sourceUrl: null
+      });
+    }
+
+    // =========================================================
+    // SEND ONLY RELEVANT CONTENT TO GEMINI
+    // =========================================================
+
+    const context = candidates
+      .map((page, index) => {
+        return `
+==============================
+SOURCE ${index + 1}
+==============================
+
+URL:
+${page.url}
+
+TITLE:
+${page.title}
+
+RELEVANT CONTENT:
+${page.content}
+`;
+      })
+      .join("\n");
+
     const prompt = `
-You are the official AI assistant of Hira Science Academy.
+You are the official AI teaching assistant for Hira Science Academy.
 
-WEBSITE:
-https://${SITE}/
+You MUST answer ONLY from the Hira Academy website content supplied
+below.
+
+Do NOT use outside knowledge.
 
 STUDENT QUESTION:
 ${question}
 
-YOUR TASK:
+HIRA ACADEMY MATERIAL:
+${context}
 
-Find the answer ONLY from the official Hira Academy website.
+RULES:
 
-MANDATORY SEARCH:
+1. Answer the student's question directly.
 
-Search Google for:
+2. Keep the answer SHORT.
+   Normally 1–4 sentences.
 
-site:${SITE} ${question}
+3. Use the information from the most relevant source.
 
-You MUST search the Hira Academy website before answering.
+4. If the exact question and answer are present in the supplied
+   content, use that information.
 
-IMPORTANT:
+5. Do not invent information.
 
-- Use ONLY pages from ${SITE}.
-- Do NOT use other educational websites.
-- Do NOT answer from general model knowledge if the answer can be
-  found on Hira Academy.
-- Find the page that actually contains information relevant to
-  the student's question.
-- Do not select the homepage unless the homepage itself contains
-  the answer.
-- Do not select an unrelated chapter page.
-- Prefer the most specific page.
+6. Do not add outside facts.
 
-PAGE PRIORITY:
+7. For Mathematics, preserve formulas and mathematical notation.
 
-1. Exact question / answer page
-2. Exercise page
-3. Short Questions page
-4. CRQs page
-5. Long Questions page
-6. MCQs page
-7. Relevant chapter page
-8. Definitions page
-9. Other relevant Hira Academy page
+8. For Physics, Chemistry, Biology and other subjects, remain
+   faithful to the supplied Hira Academy material.
 
-ANSWER STYLE:
+9. Choose the source page that actually contains the answer.
 
-- Give the answer first.
-- Keep it SHORT.
-- Normally 1–4 sentences.
-- Do not give unnecessary explanation.
-- Preserve formulas and important scientific terms.
-- For exam questions, give an exam-friendly answer.
-- Do not invent information.
-- Do not combine unrelated pages.
+10. Do not choose the homepage unless it actually contains
+    the answer.
 
-SOURCE:
+11. The final source URL MUST be one of the URLs supplied above.
 
-You MUST identify the exact Hira Academy page that supports
-your answer.
-
-Return your answer in EXACTLY this format:
+12. Return ONLY this format:
 
 ANSWER:
 <short answer>
 
 SOURCE_URL:
-<exact Hira Academy URL>
+<exact URL>
 
-If the information genuinely cannot be found anywhere on
-${SITE}, return:
+If the supplied Hira Academy content does not contain enough
+information to answer the question, return:
 
 ANSWER:
 I couldn't find this information in the current Hira Academy material.
@@ -159,11 +245,11 @@ SOURCE_URL:
 NONE
 `;
 
-    // =========================
-    // GEMINI REQUEST
-    // =========================
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+    // =========================================================
+    // GEMINI WITHOUT GOOGLE SEARCH
+    // =========================================================
+    const geminiResponse = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
       {
         method: "POST",
 
@@ -184,166 +270,149 @@ NONE
             }
           ],
 
-          tools: [
-            {
-              google_search: {}
-            }
-          ],
-
           generationConfig: {
-            maxOutputTokens: 800
+            temperature: 0.1,
+            maxOutputTokens: 700
           }
         })
       }
     );
 
-    const data = await response.json();
+    const geminiData =
+      await geminiResponse.json();
 
-    console.log("GEMINI STATUS:", response.status);
+    console.log(
+      "GEMINI STATUS:",
+      geminiResponse.status
+    );
 
-    // =========================
-    // GEMINI ERROR
-    // =========================
-    if (!response.ok) {
+    if (!geminiResponse.ok) {
       console.error(
         "GEMINI ERROR:",
-        JSON.stringify(data, null, 2)
+        JSON.stringify(
+          geminiData,
+          null,
+          2
+        )
       );
 
-      return res.status(response.status).json({
+      return res.status(
+        geminiResponse.status
+      ).json({
         error:
-          data?.error?.message ||
+          geminiData?.error?.message ||
           "Gemini API error."
       });
     }
 
-    // =========================
-    // GET TEXT
-    // =========================
-    const rawReply =
-      data?.candidates?.[0]
-        ?.content
-        ?.parts
-        ?.map(part => part.text || "")
+    // =========================================================
+    // EXTRACT GEMINI TEXT
+    // =========================================================
+    const raw =
+      geminiData?.candidates?.[0]
+        ?.content?.parts
+        ?.map(p => p.text || "")
         .join("")
         .trim();
 
-    console.log("GEMINI RAW RESPONSE:");
-    console.log(rawReply);
+    console.log(
+      "GEMINI RAW RESPONSE:",
+      raw
+    );
 
-    if (!rawReply) {
+    if (!raw) {
       return res.status(200).json({
         reply:
-          "I couldn't find this information in the current Hira Academy material."
+          "I couldn't find this information in the current Hira Academy material.",
+        sourceUrl: null
       });
     }
 
-    // =========================
-    // EXTRACT ANSWER
-    // =========================
+    // =========================================================
+    // PARSE ANSWER
+    // =========================================================
     let answer = "";
     let sourceUrl = "";
 
-    const answerMatch = rawReply.match(
-      /ANSWER:\s*([\s\S]*?)(?=\n\s*SOURCE_URL:)/i
-    );
+    const answerMatch =
+      raw.match(
+        /ANSWER:\s*([\s\S]*?)(?=\s*SOURCE_URL:)/i
+      );
 
-    const sourceMatch = rawReply.match(
-      /SOURCE_URL:\s*(\S+)/i
-    );
+    const sourceMatch =
+      raw.match(
+        /SOURCE_URL:\s*(\S+)/i
+      );
 
     if (answerMatch) {
-      answer = answerMatch[1].trim();
+      answer =
+        answerMatch[1].trim();
     }
 
     if (sourceMatch) {
-      sourceUrl = sourceMatch[1].trim();
+      sourceUrl =
+        sourceMatch[1]
+          .trim()
+          .replace(/[)\],.;]+$/, "");
     }
 
-    // =========================
-    // CLEAN SOURCE URL
-    // =========================
-    sourceUrl = sourceUrl
-      .replace(/[)\],.;]+$/, "")
-      .trim();
+    // =========================================================
+    // VALIDATE SOURCE URL
+    // =========================================================
+    const allowedUrls =
+      new Set(
+        candidates.map(
+          page => page.url
+        )
+      );
 
-    // =========================
-    // VALIDATE SOURCE
-    // =========================
-    let validSource = false;
-
-    if (sourceUrl && sourceUrl !== "NONE") {
-      try {
-        const parsed = new URL(sourceUrl);
-
-        validSource =
-          parsed.protocol === "https:" &&
-          (
-            parsed.hostname === SITE ||
-            parsed.hostname === `www.${SITE}`
-          );
-      } catch {
-        validSource = false;
-      }
+    if (
+      !allowedUrls.has(sourceUrl)
+    ) {
+      // If Gemini returned an invalid source,
+      // choose the highest-scoring page.
+      sourceUrl =
+        candidates[0]?.url || "";
     }
 
-    // =========================
-    // FALLBACK TO GROUNDING
-    // =========================
-    if (!validSource) {
-      const groundingChunks =
-        data?.candidates?.[0]
-          ?.groundingMetadata
-          ?.groundingChunks || [];
-
-      for (const chunk of groundingChunks) {
-        const uri = chunk?.web?.uri;
-
-        if (!uri) continue;
-
-        try {
-          const parsed = new URL(uri);
-
-          if (
-            parsed.hostname === SITE ||
-            parsed.hostname === `www.${SITE}`
-          ) {
-            sourceUrl = uri;
-            validSource = true;
-            break;
-          }
-        } catch {
-          // Ignore invalid URLs
-        }
-      }
-    }
-
-    // =========================
-    // IF ANSWER IS MISSING
-    // =========================
+    // =========================================================
+    // FALLBACK ANSWER
+    // =========================================================
     if (!answer) {
-      answer = rawReply
-        .replace(/SOURCE_URL:[\s\S]*$/i, "")
-        .replace(/^ANSWER:\s*/i, "")
+      answer = raw
+        .replace(
+          /SOURCE_URL:[\s\S]*$/i,
+          ""
+        )
+        .replace(
+          /^ANSWER:\s*/i,
+          ""
+        )
         .trim();
     }
 
-    // =========================
-    // REMOVE ANY URL FROM ANSWER
-    // =========================
-    answer = answer.replace(
-      /https?:\/\/(?:www\.)?hiraacademy\.com\.pk\/\S*/gi,
-      ""
-    ).trim();
+    // =========================================================
+    // REMOVE URLs FROM ANSWER
+    // =========================================================
+    answer =
+      answer
+        .replace(
+          /https?:\/\/hiraacademy\.com\.pk\/\S*/gi,
+          ""
+        )
+        .trim();
 
-    // =========================
-    // WEBSITE NOT FOUND
-    // =========================
-    const notFound =
-      /couldn't find this information/i.test(answer) ||
-      /could not find this information/i.test(answer);
-
-    if (notFound && !validSource) {
+    // =========================================================
+    // NOT FOUND
+    // =========================================================
+    if (
+      /couldn't find this information/i.test(
+        answer
+      ) ||
+      /could not find this information/i.test(
+        answer
+      )
+    ) {
       return res.status(200).json({
         reply:
           "I couldn't find this information in the current Hira Academy material.",
@@ -351,31 +420,18 @@ NONE
       });
     }
 
-    // =========================
-    // FINAL SOURCE
-    // =========================
-    if (!validSource) {
-      console.warn(
-        "NO VALID HIRA SOURCE FOUND"
-      );
-
-      return res.status(200).json({
-        reply:
-          answer ||
-          "I couldn't find this information in the current Hira Academy material.",
-        sourceUrl: null
-      });
-    }
-
-    // =========================
+    // =========================================================
     // FINAL RESPONSE
-    // =========================
+    // =========================================================
     const reply =
       `${answer}\n\n` +
       `**Source: Hira Academy**\n` +
       `[Open the relevant Hira Academy page](${sourceUrl})`;
 
-    console.log("FINAL SOURCE:", sourceUrl);
+    console.log(
+      "FINAL SOURCE:",
+      sourceUrl
+    );
 
     return res.status(200).json({
       reply,
@@ -394,5 +450,685 @@ NONE
         "Internal Server Error"
     });
   }
+}
+
+
+// =============================================================
+// SITEMAP READER
+// =============================================================
+async function getSitemapUrls(
+  sitemapUrl,
+  allowedHost
+) {
+  try {
+    const response =
+      await fetch(sitemapUrl, {
+        headers: {
+          "User-Agent":
+            "HiraAcademy-AI/1.0"
+        }
+      });
+
+    if (!response.ok) {
+      console.error(
+        "SITEMAP STATUS:",
+        response.status
+      );
+
+      return [];
+    }
+
+    const xml =
+      await response.text();
+
+    const urls = [];
+
+    // Standard sitemap
+    const matches =
+      xml.matchAll(
+        /<loc>\s*(.*?)\s*<\/loc>/gi
+      );
+
+    for (const match of matches) {
+      const url =
+        decodeXml(match[1]);
+
+      try {
+        const parsed =
+          new URL(url);
+
+        if (
+          parsed.hostname ===
+            allowedHost ||
+          parsed.hostname ===
+            `www.${allowedHost}`
+        ) {
+          urls.push(
+            parsed.href
+          );
+        }
+      } catch {
+        // Ignore bad URL
+      }
+    }
+
+    return [
+      ...new Set(urls)
+    ];
+
+  } catch (error) {
+    console.error(
+      "SITEMAP ERROR:",
+      error
+    );
+
+    return [];
+  }
+}
+
+
+// =============================================================
+// SEARCH PAGE CONTENT
+// =============================================================
+async function findRelevantPages(
+  urls,
+  question
+) {
+  const questionWords =
+    tokenize(question);
+
+  // -----------------------------------------------------------
+  // First select a manageable group of URLs.
+  //
+  // URL scoring is ONLY a pre-filter.
+  // Final relevance is determined from PAGE CONTENT.
+  // -----------------------------------------------------------
+
+  const urlCandidates =
+    urls
+      .map(url => ({
+        url,
+        score:
+          scoreUrl(
+            url,
+            questionWords
+          )
+      }))
+      .sort(
+        (a, b) =>
+          b.score - a.score
+      );
+
+  // Fetch a broad batch.
+  //
+  // Important:
+  // We deliberately fetch many pages because the answer can be
+  // hidden on a page whose filename says nothing about the topic.
+  //
+  const pagesToFetch =
+    urlCandidates.slice(
+      0,
+      Math.min(
+        40,
+        urlCandidates.length
+      )
+    );
+
+  const results = [];
+
+  // Fetch 6 pages concurrently.
+  for (
+    let i = 0;
+    i < pagesToFetch.length;
+    i += 6
+  ) {
+    const batch =
+      pagesToFetch.slice(
+        i,
+        i + 6
+      );
+
+    const batchResults =
+      await Promise.all(
+        batch.map(
+          item =>
+            fetchAndScorePage(
+              item.url,
+              questionWords,
+              question
+            )
+        )
+      );
+
+    for (
+      const result of batchResults
+    ) {
+      if (
+        result &&
+        result.score > 0
+      ) {
+        results.push(result);
+      }
+    }
+
+    // Stop once we have several strong matches.
+    const strong =
+      results.filter(
+        page =>
+          page.score >= 12
+      );
+
+    if (
+      strong.length >= 6
+    ) {
+      break;
+    }
+  }
+
+  return results
+    .sort(
+      (a, b) =>
+        b.score - a.score
+    )
+    .slice(0, 6);
+}
+
+
+// =============================================================
+// DOWNLOAD + SCORE ONE PAGE
+// =============================================================
+async function fetchAndScorePage(
+  url,
+  questionWords,
+  originalQuestion
+) {
+  try {
+    const response =
+      await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 HiraAcademy-AI/1.0"
+        }
+      });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const html =
+      await response.text();
+
+    if (!html) {
+      return null;
+    }
+
+    const title =
+      extractTitle(html);
+
+    const text =
+      htmlToText(html);
+
+    if (
+      text.length < 50
+    ) {
+      return null;
+    }
+
+    // ---------------------------------------------------------
+    // Find relevant text around matching terms.
+    // ---------------------------------------------------------
+    const relevantContent =
+      extractRelevantContent(
+        text,
+        questionWords,
+        originalQuestion
+      );
+
+    const contentScore =
+      scoreContent(
+        text,
+        questionWords,
+        originalQuestion
+      );
+
+    const titleScore =
+      scoreText(
+        title,
+        questionWords
+      );
+
+    const urlScore =
+      scoreUrl(
+        url,
+        questionWords
+      );
+
+    const totalScore =
+      contentScore * 3 +
+      titleScore * 2 +
+      urlScore;
+
+    if (
+      totalScore <= 0
+    ) {
+      return null;
+    }
+
+    return {
+      url,
+      title:
+        title ||
+        "Hira Academy",
+      content:
+        relevantContent,
+      score:
+        totalScore
+    };
+
+  } catch (error) {
+    console.error(
+      "PAGE FETCH ERROR:",
+      url,
+      error.message
+    );
+
+    return null;
+  }
+}
+
+
+// =============================================================
+// TOKENIZE
+// =============================================================
+function tokenize(text) {
+  return [
+    ...new Set(
+      text
+        .toLowerCase()
+        .replace(
+          /[^\p{L}\p{N}]+/gu,
+          " "
+        )
+        .split(/\s+/)
+        .filter(
+          word =>
+            word.length >= 3 &&
+            !STOP_WORDS.has(word)
+        )
+    )
+  ];
+}
+
+
+// =============================================================
+// CONTENT SCORING
+// =============================================================
+function scoreContent(
+  text,
+  words,
+  question
+) {
+  const lower =
+    text.toLowerCase();
+
+  let score = 0;
+
+  // Exact question match
+  const normalizedQuestion =
+    question
+      .toLowerCase()
+      .replace(
+        /[^\p{L}\p{N}]+/gu,
+        " "
+      )
+      .trim();
+
+  if (
+    normalizedQuestion.length >= 10 &&
+    lower.includes(
+      normalizedQuestion
+    )
+  ) {
+    score += 30;
+  }
+
+  // Individual important words
+  for (
+    const word of words
+  ) {
+    const occurrences =
+      countOccurrences(
+        lower,
+        word
+      );
+
+    if (
+      occurrences > 0
+    ) {
+      score += Math.min(
+        occurrences * 2,
+        10
+      );
+    }
+  }
+
+  // Question-style matches
+  if (
+    lower.includes(
+      question
+        .toLowerCase()
+        .trim()
+    )
+  ) {
+    score += 20;
+  }
+
+  return score;
+}
+
+
+// =============================================================
+// GENERIC TEXT SCORE
+// =============================================================
+function scoreText(
+  text,
+  words
+) {
+  const lower =
+    text.toLowerCase();
+
+  let score = 0;
+
+  for (
+    const word of words
+  ) {
+    if (
+      lower.includes(word)
+    ) {
+      score += 2;
+    }
+  }
+
+  return score;
+}
+
+
+// =============================================================
+// URL SCORE
+// =============================================================
+function scoreUrl(
+  url,
+  words
+) {
+  const lower =
+    url.toLowerCase();
+
+  let score = 0;
+
+  for (
+    const word of words
+  ) {
+    if (
+      lower.includes(word)
+    ) {
+      score += 2;
+    }
+  }
+
+  return score;
+}
+
+
+// =============================================================
+// EXTRACT RELEVANT CONTENT
+// =============================================================
+function extractRelevantContent(
+  text,
+  words,
+  question
+) {
+  const sentences =
+    text
+      .split(
+        /(?<=[.!?])\s+|\n+/
+      )
+      .map(
+        sentence =>
+          sentence.trim()
+      )
+      .filter(
+        sentence =>
+          sentence.length > 20
+      );
+
+  const scored =
+    sentences.map(
+      sentence => ({
+        sentence,
+        score:
+          scoreText(
+            sentence,
+            words
+          ) +
+          (
+            sentence
+              .toLowerCase()
+              .includes(
+                question
+                  .toLowerCase()
+              )
+              ? 30
+              : 0
+          )
+      })
+    );
+
+  scored.sort(
+    (a, b) =>
+      b.score - a.score
+  );
+
+  const selected =
+    scored
+      .filter(
+        item =>
+          item.score > 0
+      )
+      .slice(0, 18)
+      .map(
+        item =>
+          item.sentence
+      );
+
+  // If matching sentences were found,
+  // use them.
+  if (
+    selected.length
+  ) {
+    return selected.join(
+      "\n"
+    );
+  }
+
+  // Otherwise provide beginning
+  // of page as fallback.
+  return text.slice(
+    0,
+    6000
+  );
+}
+
+
+// =============================================================
+// HTML → TEXT
+// =============================================================
+function htmlToText(html) {
+  return html
+    .replace(
+      /<script[\s\S]*?<\/script>/gi,
+      " "
+    )
+    .replace(
+      /<style[\s\S]*?<\/style>/gi,
+      " "
+    )
+    .replace(
+      /<noscript[\s\S]*?<\/noscript>/gi,
+      " "
+    )
+    .replace(
+      /<svg[\s\S]*?<\/svg>/gi,
+      " "
+    )
+    .replace(
+      /<[^>]+>/g,
+      " "
+    )
+    .replace(
+      /&nbsp;/gi,
+      " "
+    )
+    .replace(
+      /&amp;/gi,
+      "&"
+    )
+    .replace(
+      /&quot;/gi,
+      '"'
+    )
+    .replace(
+      /&#39;/gi,
+      "'"
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+}
+
+
+// =============================================================
+// EXTRACT TITLE
+// =============================================================
+function extractTitle(html) {
+  const match =
+    html.match(
+      /<title[^>]*>([\s\S]*?)<\/title>/i
+    );
+
+  return match
+    ? htmlToText(
+        match[1]
+      )
+    : "";
+}
+
+
+// =============================================================
+// XML DECODE
+// =============================================================
+function decodeXml(text) {
+  return text
+    .replace(
+      /&amp;/g,
+      "&"
+    )
+    .replace(
+      /&lt;/g,
+      "<"
+    )
+    .replace(
+      /&gt;/g,
+      ">"
+    )
+    .replace(
+      /&quot;/g,
+      '"'
+    )
+    .replace(
+      /&#39;/g,
+      "'"
+    )
+    .trim();
+}
+
+
+// =============================================================
+// COUNT OCCURRENCES
+// =============================================================
+function countOccurrences(
+  text,
+  word
+) {
+  let count = 0;
+  let position = 0;
+
+  while (
+    (position =
+      text.indexOf(
+        word,
+        position
+      )) !== -1
+  ) {
+    count++;
+    position += word.length;
+  }
+
+  return count;
+}
+
+
+// =============================================================
+// STOP WORDS
+// =============================================================
+const STOP_WORDS =
+  new Set([
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "how",
+    "does",
+    "do",
+    "did",
+    "the",
+    "and",
+    "for",
+    "from",
+    "with",
+    "that",
+    "this",
+    "these",
+    "those",
+    "are",
+    "is",
+    "was",
+    "were",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "about",
+    "into",
+    "your",
+    "you",
+    "give",
+    "tell",
+    "explain",
+    "define",
+    "difference",
+    "between",
+    "class",
+    "chapter",
+    "question",
+    "answer",
+    "exercise",
+    "solve",
+    "find"
+  ]);
 }
 ```
