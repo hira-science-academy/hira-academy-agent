@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   const SITEMAP_URL = `${BASE_URL}/sitemap.xml`;
 
   // =========================================================
-  // CORS
+  // CORS HEADERS
   // =========================================================
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     }
 
     // =========================================================
-    // READ REQUEST
+    // READ & PARSE REQUEST
     // =========================================================
     let body = req.body;
 
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
     console.log("======================================");
 
     // =========================================================
-    // SIMPLE CACHE
+    // SITEMAP CACHING (30 MIN)
     // =========================================================
     if (!globalThis.hiraCache) {
       globalThis.hiraCache = {
@@ -85,9 +85,7 @@ export default async function handler(req, res) {
       };
     }
 
-    // Cache sitemap URLs for 30 minutes
     const CACHE_TIME = 30 * 60 * 1000;
-
     let urls = globalThis.hiraCache.urls;
 
     if (
@@ -101,10 +99,7 @@ export default async function handler(req, res) {
       globalThis.hiraCache.urls = urls;
       globalThis.hiraCache.timestamp = Date.now();
 
-      console.log(
-        "SITEMAP URL COUNT:",
-        urls.length
-      );
+      console.log("SITEMAP URL COUNT:", urls.length);
     }
 
     if (!urls || !urls.length) {
@@ -118,14 +113,8 @@ export default async function handler(req, res) {
     // =========================================================
     const candidates = await findRelevantPages(urls, question);
 
-    console.log(
-      "RELEVANT PAGE COUNT:",
-      candidates.length
-    );
+    console.log("RELEVANT PAGE COUNT:", candidates.length);
 
-    // =========================================================
-    // NOTHING FOUND
-    // =========================================================
     if (!candidates.length) {
       return res.status(200).json({
         reply: "I couldn't find this information in the current Hira Academy material.",
@@ -134,7 +123,7 @@ export default async function handler(req, res) {
     }
 
     // =========================================================
-    // SEND ONLY RELEVANT CONTENT TO GEMINI
+    // CONSTRUCT CONTEXT & PROMPT
     // =========================================================
     const context = candidates
       .map((page, index) => {
@@ -195,10 +184,10 @@ NONE
 `;
 
     // =========================================================
-    // GEMINI CALL
+    // GEMINI API CALL (GEMINI 2.0 FLASH)
     // =========================================================
     const geminiResponse = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
       {
         method: "POST",
         headers: {
@@ -236,7 +225,7 @@ NONE
     }
 
     // =========================================================
-    // EXTRACT GEMINI TEXT
+    // EXTRACT GEMINI RESPONSE
     // =========================================================
     const raw = geminiData?.candidates?.[0]?.content?.parts
       ?.map(p => p.text || "")
@@ -253,7 +242,7 @@ NONE
     }
 
     // =========================================================
-    // PARSE ANSWER
+    // PARSE RESPONSE FORMAT
     // =========================================================
     let answer = "";
     let sourceUrl = "";
@@ -278,9 +267,6 @@ NONE
       sourceUrl = candidates[0]?.url || "";
     }
 
-    // =========================================================
-    // FALLBACK ANSWER
-    // =========================================================
     if (!answer) {
       answer = raw
         .replace(/SOURCE_URL:[\s\S]*$/i, "")
@@ -288,14 +274,10 @@ NONE
         .trim();
     }
 
-    // Remove raw URLs echoed inside the answer string
     answer = answer
       .replace(/https?:\/\/hiraacademy\.com\.pk\/\S*/gi, "")
       .trim();
 
-    // =========================================================
-    // NOT FOUND
-    // =========================================================
     if (
       /couldn't find this information/i.test(answer) ||
       /could not find this information/i.test(answer)
@@ -307,7 +289,7 @@ NONE
     }
 
     // =========================================================
-    // FINAL RESPONSE
+    // FINAL OUTPUT
     // =========================================================
     const reply =
       `${answer}\n\n` +
@@ -364,7 +346,7 @@ async function getSitemapUrls(sitemapUrl, allowedHost) {
           urls.push(parsed.href);
         }
       } catch {
-        // Ignore bad URL
+        // Skip malformed URLs
       }
     }
 
@@ -376,7 +358,7 @@ async function getSitemapUrls(sitemapUrl, allowedHost) {
 }
 
 // =============================================================
-// SEARCH PAGE CONTENT
+// PAGE FINDER & PARALLEL FETCHING
 // =============================================================
 async function findRelevantPages(urls, question) {
   const questionWords = tokenize(question);
@@ -422,7 +404,7 @@ async function findRelevantPages(urls, question) {
 }
 
 // =============================================================
-// DOWNLOAD + SCORE ONE PAGE
+// DOWNLOAD & SCORE PAGE CONTENT
 // =============================================================
 async function fetchAndScorePage(url, questionWords, originalQuestion) {
   try {
@@ -469,7 +451,7 @@ async function fetchAndScorePage(url, questionWords, originalQuestion) {
 }
 
 // =============================================================
-// TOKENIZE
+// HELPER FUNCTIONS & UTILITIES
 // =============================================================
 function tokenize(text) {
   return [
@@ -485,9 +467,6 @@ function tokenize(text) {
   ];
 }
 
-// =============================================================
-// CONTENT SCORING
-// =============================================================
 function scoreContent(text, words, question) {
   const lower = text.toLowerCase();
   let score = 0;
@@ -518,9 +497,6 @@ function scoreContent(text, words, question) {
   return score;
 }
 
-// =============================================================
-// GENERIC TEXT SCORE
-// =============================================================
 function scoreText(text, words) {
   const lower = text.toLowerCase();
   let score = 0;
@@ -534,9 +510,6 @@ function scoreText(text, words) {
   return score;
 }
 
-// =============================================================
-// URL SCORE
-// =============================================================
 function scoreUrl(url, words) {
   const lower = url.toLowerCase();
   let score = 0;
@@ -550,9 +523,6 @@ function scoreUrl(url, words) {
   return score;
 }
 
-// =============================================================
-// EXTRACT RELEVANT CONTENT
-// =============================================================
 function extractRelevantContent(text, words, question) {
   const sentences = text
     .split(/(?<=[.!?])\s+|\n+/)
@@ -580,9 +550,6 @@ function extractRelevantContent(text, words, question) {
   return text.slice(0, 6000);
 }
 
-// =============================================================
-// HTML → TEXT
-// =============================================================
 function htmlToText(html) {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -598,17 +565,11 @@ function htmlToText(html) {
     .trim();
 }
 
-// =============================================================
-// EXTRACT TITLE
-// =============================================================
 function extractTitle(html) {
   const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   return match ? htmlToText(match[1]) : "";
 }
 
-// =============================================================
-// XML DECODE
-// =============================================================
 function decodeXml(text) {
   return text
     .replace(/&amp;/g, "&")
@@ -619,9 +580,6 @@ function decodeXml(text) {
     .trim();
 }
 
-// =============================================================
-// COUNT OCCURRENCES
-// =============================================================
 function countOccurrences(text, word) {
   if (!word) return 0;
   let count = 0;
@@ -635,9 +593,6 @@ function countOccurrences(text, word) {
   return count;
 }
 
-// =============================================================
-// STOP WORDS
-// =============================================================
 const STOP_WORDS = new Set([
   "what", "when", "where", "which", "who", "why", "how",
   "does", "do", "did", "the", "and", "for", "from", "with",
